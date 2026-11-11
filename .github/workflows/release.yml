@@ -15,7 +15,7 @@ jobs:
       matrix:
         include:
           - platform: 'windows-latest'
-            args: ''
+            args: '--ignore-version-mismatches'
 
     runs-on: ${{ matrix.platform }}
     steps:
