@@ -8,6 +8,7 @@ import { EqualizerPanel } from '../audio/EqualizerPanel';
 import { SubtitlePanel } from '../subtitles/SubtitlePanel';
 import { PlaylistPanel } from '../playlist/PlaylistPanel';
 import { PlaybackSettingsModal } from '../settings/PlaybackSettingsModal';
+import { PlayerContextMenu } from './PlayerContextMenu';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Film, FolderOpen, ListMusic, Play } from 'lucide-react';
 
@@ -38,12 +39,17 @@ export const PlayerScreen: React.FC = () => {
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(0);
   const [volume, setVolume] = useState<number>(100);
+  const [speed, setSpeed] = useState<number>(1.0);
+  const [loop, setLoop] = useState<boolean>(false);
   const [drawer, setDrawer] = useState<DrawerPanel>('none');
   const [hudVisible, setHudVisible] = useState<boolean>(true);
   const [osdMessage, setOsdMessage] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
   const [isDraggingFile, setIsDraggingFile] = useState<boolean>(false);
+
+  // Right-click context menu state
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   // Playlist state
   const [playlist, setPlaylist] = useState<PlaylistItem[]>([]);
@@ -77,11 +83,11 @@ export const PlayerScreen: React.FC = () => {
     setHudVisible(true);
     if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
     hudTimerRef.current = window.setTimeout(() => {
-      if (drawer === 'none' && !settingsOpen && videoSrc) {
+      if (drawer === 'none' && !settingsOpen && !contextMenu && videoSrc) {
         setHudVisible(false);
       }
     }, 2800);
-  }, [drawer, settingsOpen, videoSrc]);
+  }, [drawer, settingsOpen, contextMenu, videoSrc]);
 
   useEffect(() => {
     tauriClient.getEqPresets().then(setPresets).catch(() => {});
@@ -146,7 +152,6 @@ export const PlayerScreen: React.FC = () => {
         setPlaylist((prev) => [...prev, newItem]);
         setPlaylistIndex(playlist.length);
 
-        // Immediate direct autoplay
         if (videoRef.current) {
           videoRef.current.src = media.assetUrl;
           videoRef.current.play().catch(() => {});
@@ -168,6 +173,46 @@ export const PlayerScreen: React.FC = () => {
     } catch (_) {
       setIsFullScreen((prev) => !prev);
     }
+  };
+
+  // Change Playback Speed
+  const handleSetSpeed = (newSpeed: number) => {
+    setSpeed(newSpeed);
+    if (videoRef.current) {
+      videoRef.current.playbackRate = newSpeed;
+    }
+    showOsd(`Speed: ${newSpeed}x`);
+  };
+
+  // Take Screenshot of Current Frame
+  const handleTakeScreenshot = () => {
+    if (!videoRef.current) return;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = videoRef.current.videoWidth || 1920;
+      canvas.height = videoRef.current.videoHeight || 1080;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+        const a = document.createElement('a');
+        a.download = `${title}_${Math.round(currentTime)}s.png`;
+        a.href = canvas.toDataURL('image/png');
+        a.click();
+        showOsd('Saved Frame Screenshot');
+      }
+    } catch (_) {
+      showOsd('Snapshot failed (CORS/Format)');
+    }
+  };
+
+  // Close Active Media
+  const handleCloseMedia = () => {
+    setVideoSrc('');
+    setTitle('MyPlayer Pro');
+    setPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+    showOsd('Closed Media');
   };
 
   // Parse External .SRT File
@@ -255,6 +300,7 @@ export const PlayerScreen: React.FC = () => {
         e.preventDefault();
         handleOpenFile();
       } else if (e.code === 'Escape') {
+        if (contextMenu) setContextMenu(null);
         if (drawer !== 'none') setDrawer('none');
         if (settingsOpen) setSettingsOpen(false);
       }
@@ -262,7 +308,7 @@ export const PlayerScreen: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [bumpHud, showOsd, volume, seekStepSeconds, volumeStepPercent, drawer, settingsOpen, handleSeekDelta]);
+  }, [bumpHud, showOsd, volume, seekStepSeconds, volumeStepPercent, drawer, settingsOpen, handleSeekDelta, contextMenu]);
 
   // Drag and drop handling with AUTOPLAY
   const handleDragOver = (e: React.DragEvent) => {
@@ -294,7 +340,6 @@ export const PlayerScreen: React.FC = () => {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      onContextMenu={(e) => e.preventDefault()}
       className="relative w-screen h-screen bg-black text-white overflow-hidden flex flex-col select-none"
     >
       {/* 1. Custom Minimalist Frameless Top Window Bar */}
@@ -307,9 +352,15 @@ export const PlayerScreen: React.FC = () => {
       {/* 2. Main Viewport & Ambient Background */}
       <div className="relative flex-1 flex overflow-hidden">
         <main
-          onClick={() => setDrawer('none')}
+          onClick={() => {
+            if (contextMenu) setContextMenu(null);
+            if (drawer !== 'none') setDrawer('none');
+          }}
           onDoubleClick={toggleFullscreen}
-          onContextMenu={(e) => e.preventDefault()}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setContextMenu({ x: e.clientX, y: e.clientY });
+          }}
           className="relative flex-1 flex items-center justify-center bg-black overflow-hidden"
         >
           {/* Video Element with Autoplay */}
@@ -318,6 +369,7 @@ export const PlayerScreen: React.FC = () => {
               ref={videoRef}
               src={videoSrc}
               autoPlay
+              loop={loop}
               onPlay={() => setPlaying(true)}
               onPause={() => setPlaying(false)}
               onLoadedMetadata={(e) => {
@@ -332,7 +384,10 @@ export const PlayerScreen: React.FC = () => {
           ) : (
             /* Minimalist Sharp Empty State (Right-Angled, Clean, No Bloat) */
             <div className="relative z-10 flex flex-col items-center justify-center text-center p-6 max-w-sm animate-in fade-in duration-200">
-              <div className="w-12 h-12 bg-white/[0.05] border border-white/10 flex items-center justify-center mb-4 group cursor-pointer hover:border-amber-400 transition" onClick={handleOpenFile}>
+              <div
+                className="w-12 h-12 bg-white/[0.05] border border-white/10 flex items-center justify-center mb-4 group cursor-pointer hover:border-amber-400 transition"
+                onClick={handleOpenFile}
+              >
                 <Play size={18} className="fill-amber-400 text-amber-400 ml-0.5" />
               </div>
 
@@ -366,7 +421,7 @@ export const PlayerScreen: React.FC = () => {
                 <span>•</span>
                 <span>←/→: Seek</span>
                 <span>•</span>
-                <span>F: Fullscreen</span>
+                <span>Right-Click: Menu</span>
               </div>
             </div>
           )}
@@ -395,6 +450,48 @@ export const PlayerScreen: React.FC = () => {
             >
               {activeCueText || 'Subtitle Framing Preview — Drag slider to adjust'}
             </div>
+          )}
+
+          {/* Custom Right-Click Context Menu */}
+          {contextMenu && (
+            <PlayerContextMenu
+              x={contextMenu.x}
+              y={contextMenu.y}
+              onClose={() => setContextMenu(null)}
+              playing={playing}
+              onTogglePlay={() => {
+                if (!videoRef.current) return;
+                videoRef.current.paused ? videoRef.current.play() : videoRef.current.pause();
+              }}
+              onSeekDelta={handleSeekDelta}
+              onOpenFile={handleOpenFile}
+              onOpenDrawer={(panel) => setDrawer(panel)}
+              onOpenSettings={() => setSettingsOpen(true)}
+              onToggleFullscreen={toggleFullscreen}
+              isFullScreen={isFullScreen}
+              speed={speed}
+              onSetSpeed={handleSetSpeed}
+              loop={loop}
+              onToggleLoop={() => {
+                setLoop((prev) => !prev);
+                showOsd(!loop ? 'Loop: ON' : 'Loop: OFF');
+              }}
+              onTakeScreenshot={handleTakeScreenshot}
+              onCloseMedia={handleCloseMedia}
+              volume={volume}
+              onToggleMute={() => {
+                if (volume > 0) {
+                  setVolume(0);
+                  if (videoRef.current) videoRef.current.volume = 0;
+                  showOsd('Muted');
+                } else {
+                  setVolume(100);
+                  if (videoRef.current) videoRef.current.volume = 1;
+                  showOsd('Volume: 100%');
+                }
+              }}
+              hasMedia={Boolean(videoSrc)}
+            />
           )}
         </main>
 
