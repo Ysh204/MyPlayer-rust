@@ -1,6 +1,6 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { EqPreset, EqState, SubtitleConfig } from './types';
+import type { EqPreset, EqState, SubtitleConfig, TrackInfo } from './types';
 
 const isTauri = typeof window !== 'undefined' && Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
 
@@ -12,13 +12,31 @@ const FALLBACK_PRESETS: EqPreset[] = [
   { name: 'Rock', gains: [5.0, 3.0, -2.5, 3.5, 6.0] },
 ];
 
+export interface OpenMediaResult {
+  rawPath: string;
+  assetUrl: string;
+  cleanTitle: string;
+  audioTracks?: TrackInfo[];
+  subtitleTracks?: TrackInfo[];
+}
+
 export const tauriClient = {
-  async pickAndOpenVideo(): Promise<{ rawPath: string; assetUrl: string; cleanTitle: string } | null> {
+  async pickAndOpenVideo(): Promise<OpenMediaResult | null> {
     if (!isTauri) {
       return {
         rawPath: 'sample.mp4',
         assetUrl: '/sample_frame.jpg',
         cleanTitle: 'Dark Matter (2024)',
+        audioTracks: [
+          { id: 'audio-0', title: 'English [Dolby 5.1 Surround]', language: 'en', isDefault: true },
+          { id: 'audio-1', title: 'English [Stereo 2.0]', language: 'en' },
+          { id: 'audio-2', title: 'Director’s Commentary', language: 'en' },
+        ],
+        subtitleTracks: [
+          { id: 'sub-0', title: 'English [CC] (Full Dialogue)', language: 'en', isDefault: true },
+          { id: 'sub-1', title: 'Spanish (Español Latino)', language: 'es' },
+          { id: 'sub-2', title: 'French (Français)', language: 'fr' },
+        ],
       };
     }
     const selected = await open({
@@ -27,14 +45,31 @@ export const tauriClient = {
     });
     if (!selected || typeof selected !== 'string') return null;
 
-    const res = await invoke<{ rawPath: string; cleanTitle: string }>('open_media_file', {
-      path: selected,
+    return this.openFilePath(selected);
+  },
+
+  async openFilePath(path: string): Promise<OpenMediaResult | null> {
+    if (!isTauri) return null;
+    const res = await invoke<{
+      rawPath: string;
+      cleanTitle: string;
+      audioTracks: TrackInfo[];
+      subtitleTracks: TrackInfo[];
+    }>('open_media_file', {
+      path,
     });
     return {
       rawPath: res.rawPath,
       assetUrl: convertFileSrc(res.rawPath),
       cleanTitle: res.cleanTitle,
+      audioTracks: res.audioTracks,
+      subtitleTracks: res.subtitleTracks,
     };
+  },
+
+  async loadSubtitleFile(filePath: string): Promise<string> {
+    if (!isTauri) return '';
+    return invoke<string>('load_subtitle_file', { path: filePath });
   },
 
   async syncAudioEq(eq: EqState): Promise<string> {

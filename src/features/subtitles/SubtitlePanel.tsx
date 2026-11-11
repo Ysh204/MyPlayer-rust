@@ -1,15 +1,21 @@
 import React from 'react';
-import type { SubtitleConfig } from '../../core/types';
-import { Subtitles, Upload, RotateCcw } from 'lucide-react';
+import type { SubtitleConfig, TrackInfo } from '../../core/types';
+import { Subtitles, Upload, RotateCcw, Check, FileText } from 'lucide-react';
 
 interface SubtitlePanelProps {
   config: SubtitleConfig;
+  subtitleTracks?: TrackInfo[];
+  selectedSubtitleTrackId?: string;
+  onSelectSubtitleTrack?: (id: string) => void;
   onChange: (updated: SubtitleConfig, toastMsg?: string) => void;
   onLoadSrtFile: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }
 
 export const SubtitlePanel: React.FC<SubtitlePanelProps> = ({
   config,
+  subtitleTracks = [],
+  selectedSubtitleTrackId = 'off',
+  onSelectSubtitleTrack,
   onChange,
   onLoadSrtFile,
 }) => {
@@ -20,7 +26,7 @@ export const SubtitlePanel: React.FC<SubtitlePanelProps> = ({
         <div className="flex items-center gap-2">
           <Subtitles size={13} className="text-amber-400" />
           <h2 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-300">
-            Subtitle Framing
+            Subtitle Streams & Framing
           </h2>
         </div>
         <button
@@ -43,6 +49,60 @@ export const SubtitlePanel: React.FC<SubtitlePanelProps> = ({
           <RotateCcw size={11} />
           <span>Reset</span>
         </button>
+      </div>
+
+      {/* Subtitle Track Selector Section */}
+      <div className="space-y-1.5 bg-white/[0.02] p-2.5 border border-white/[0.06]">
+        <div className="flex justify-between items-center text-xs mb-1">
+          <span className="text-[9px] uppercase font-semibold text-zinc-400 tracking-wider">
+            Subtitle Tracks
+          </span>
+          <span className="text-[10px] font-mono text-amber-400 truncate max-w-[120px] text-right">
+            {selectedSubtitleTrackId === 'off'
+              ? 'Off'
+              : subtitleTracks.find((t) => t.id === selectedSubtitleTrackId)?.title || 'Selected'}
+          </span>
+        </div>
+
+        <div className="flex flex-col gap-1 max-h-44 overflow-y-auto pr-0.5">
+          {/* Off / Disable option */}
+          <button
+            onClick={() => onSelectSubtitleTrack?.('off')}
+            className={`flex items-center justify-between px-2.5 py-1.5 text-xs text-left transition border ${
+              selectedSubtitleTrackId === 'off'
+                ? 'bg-amber-500/20 text-amber-400 border-amber-500/40 font-semibold'
+                : 'bg-white/[0.03] hover:bg-white/[0.07] text-zinc-300 border-white/[0.05]'
+            }`}
+          >
+            <span className="truncate">None / Off</span>
+            {selectedSubtitleTrackId === 'off' && <Check size={12} className="text-amber-400 shrink-0" />}
+          </button>
+
+          {/* Available subtitle tracks */}
+          {subtitleTracks.map((track) => {
+            const isSelected = track.id === selectedSubtitleTrackId;
+            return (
+              <button
+                key={track.id}
+                onClick={() => onSelectSubtitleTrack?.(track.id)}
+                className={`flex items-center justify-between px-2.5 py-1.5 text-xs text-left transition border ${
+                  isSelected
+                    ? 'bg-amber-500/20 text-amber-400 border-amber-500/40 font-semibold'
+                    : 'bg-white/[0.03] hover:bg-white/[0.07] text-zinc-300 border-white/[0.05]'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 truncate">
+                  <FileText size={11} className={isSelected ? 'text-amber-400 shrink-0' : 'text-zinc-500 shrink-0'} />
+                  <span className="truncate">{track.title || track.language || track.id}</span>
+                  {track.language && (
+                    <span className="text-[9px] uppercase text-zinc-500 font-mono shrink-0">[{track.language}]</span>
+                  )}
+                </div>
+                {isSelected && <Check size={12} className="text-amber-400 shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* External Subtitle Loader Card */}

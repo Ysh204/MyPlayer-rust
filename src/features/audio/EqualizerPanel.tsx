@@ -1,11 +1,14 @@
 import React from 'react';
-import type { EqPreset, EqState } from '../../core/types';
-import { Sliders, RotateCcw, Moon } from 'lucide-react';
+import type { EqPreset, EqState, TrackInfo } from '../../core/types';
+import { Sliders, RotateCcw, Moon, Volume2, Check } from 'lucide-react';
 
 interface EqualizerPanelProps {
   eq: EqState;
   presets: EqPreset[];
   afFilterPreview: string;
+  audioTracks?: TrackInfo[];
+  selectedAudioTrackId?: string;
+  onSelectAudioTrack?: (id: string) => void;
   onChange: (updated: EqState, toastMsg?: string) => void;
   onReset: () => void;
 }
@@ -14,6 +17,9 @@ export const EqualizerPanel: React.FC<EqualizerPanelProps> = ({
   eq,
   presets,
   afFilterPreview,
+  audioTracks = [],
+  selectedAudioTrackId = 'default',
+  onSelectAudioTrack,
   onChange,
   onReset,
 }) => {
@@ -30,7 +36,7 @@ export const EqualizerPanel: React.FC<EqualizerPanelProps> = ({
         <div className="flex items-center gap-2">
           <Sliders size={13} className="text-amber-400" />
           <h2 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-300">
-            Audio Equalizer
+            Audio Streams & Equalizer
           </h2>
         </div>
         <button
@@ -41,6 +47,44 @@ export const EqualizerPanel: React.FC<EqualizerPanelProps> = ({
           <RotateCcw size={11} />
           <span>Reset</span>
         </button>
+      </div>
+
+      {/* Audio Streams / Track Selector Section */}
+      <div className="space-y-1.5 bg-white/[0.02] p-2.5 border border-white/[0.06]">
+        <div className="flex justify-between items-center text-xs mb-1">
+          <span className="text-[9px] uppercase font-semibold text-zinc-400 tracking-wider">
+            Audio Track
+          </span>
+          <span className="text-[10px] font-mono text-amber-400 truncate max-w-[120px] text-right">
+            {audioTracks.find((t) => t.id === selectedAudioTrackId)?.title || 'Default'}
+          </span>
+        </div>
+
+        <div className="flex flex-col gap-1 max-h-36 overflow-y-auto pr-0.5">
+          {audioTracks.map((track) => {
+            const isSelected = track.id === selectedAudioTrackId;
+            return (
+              <button
+                key={track.id}
+                onClick={() => onSelectAudioTrack?.(track.id)}
+                className={`flex items-center justify-between px-2.5 py-1.5 text-xs text-left transition border ${
+                  isSelected
+                    ? 'bg-amber-500/20 text-amber-400 border-amber-500/40 font-semibold'
+                    : 'bg-white/[0.03] hover:bg-white/[0.07] text-zinc-300 border-white/[0.05]'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 truncate">
+                  <Volume2 size={11} className={isSelected ? 'text-amber-400 shrink-0' : 'text-zinc-500 shrink-0'} />
+                  <span className="truncate">{track.title || track.language || `Track ${track.id}`}</span>
+                  {track.language && (
+                    <span className="text-[9px] uppercase text-zinc-500 font-mono shrink-0">[{track.language}]</span>
+                  )}
+                </div>
+                {isSelected && <Check size={12} className="text-amber-400 shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Preset Pills */}

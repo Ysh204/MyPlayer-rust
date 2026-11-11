@@ -6,6 +6,7 @@ use crate::core::title_cleaner::clean_media_title;
 use crate::data::models::eq_state::{EqPreset, EqState};
 use crate::data::models::subtitle_style::SubtitleConfig;
 use crate::services::audio_filter_builder::build_audio_filter;
+use crate::services::media_inspector::{inspect_media_file, MediaTrack};
 use crate::services::player_service::PlayerService;
 
 pub struct AppState {
@@ -33,16 +34,26 @@ impl Default for AppState {
 pub struct MediaOpenResponse {
     pub raw_path: String,
     pub clean_title: String,
+    pub audio_tracks: Vec<MediaTrack>,
+    pub subtitle_tracks: Vec<MediaTrack>,
 }
 
 #[tauri::command]
 pub fn open_media_file(state: State<'_, Mutex<AppState>>, path: String) -> MediaOpenResponse {
     let mut app = state.lock().unwrap();
     app.player.open_file(&path);
+    let inspected = inspect_media_file(&path);
     MediaOpenResponse {
         clean_title: clean_media_title(&path),
         raw_path: path,
+        audio_tracks: inspected.audio_tracks,
+        subtitle_tracks: inspected.subtitle_tracks,
     }
+}
+
+#[tauri::command]
+pub fn load_subtitle_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

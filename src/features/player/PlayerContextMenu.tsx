@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { DrawerPanel } from '../../core/types';
+import type { DrawerPanel, TrackInfo } from '../../core/types';
 import {
   FolderOpen,
   Play,
@@ -43,6 +43,12 @@ interface PlayerContextMenuProps {
   volume: number;
   onToggleMute: () => void;
   hasMedia: boolean;
+  audioTracks?: TrackInfo[];
+  selectedAudioTrack?: string;
+  onSelectAudioTrack?: (id: string) => void;
+  subtitleTracks?: TrackInfo[];
+  selectedSubtitleTrack?: string;
+  onSelectSubtitleTrack?: (id: string) => void;
 }
 
 export const PlayerContextMenu: React.FC<PlayerContextMenuProps> = ({
@@ -66,6 +72,12 @@ export const PlayerContextMenu: React.FC<PlayerContextMenuProps> = ({
   volume,
   onToggleMute,
   hasMedia,
+  audioTracks = [],
+  selectedAudioTrack = 'default',
+  onSelectAudioTrack,
+  subtitleTracks = [],
+  selectedSubtitleTrack = 'off',
+  onSelectSubtitleTrack,
 }) => {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [activeSubmenu, setActiveSubmenu] = useState<string | null>(null);
@@ -277,6 +289,103 @@ export const PlayerContextMenu: React.FC<PlayerContextMenuProps> = ({
         <Subtitles size={13} className="text-amber-400" />
         <span>Subtitle Framing & Sync…</span>
       </button>
+
+      {/* Audio Track Flyout */}
+      {hasMedia && (
+        <div
+          className="relative"
+          onMouseEnter={() => setActiveSubmenu('audio-track')}
+          onMouseLeave={() => setActiveSubmenu(null)}
+        >
+          <div className="w-full h-7 px-3 flex items-center justify-between hover:bg-white/[0.08] text-zinc-300 hover:text-white cursor-pointer transition">
+            <div className="flex items-center gap-2.5">
+              <Volume2 size={13} className="text-zinc-400" />
+              <span>Audio Track</span>
+            </div>
+            <ChevronRight size={12} className="text-zinc-500" />
+          </div>
+
+          {activeSubmenu === 'audio-track' && (
+            <div className="absolute left-full top-0 w-52 bg-[#0D0E15]/95 backdrop-blur-xl border border-white/[0.1] shadow-2xl py-1 text-zinc-200">
+              {audioTracks.length === 0 ? (
+                <div className="w-full h-6 px-3 flex items-center justify-between text-[11px] text-zinc-400">
+                  <span className="truncate">Primary Audio (Default)</span>
+                  <Check size={11} className="text-amber-400" />
+                </div>
+              ) : (
+                audioTracks.map((track) => {
+                  const isSelected = track.id === selectedAudioTrack;
+                  return (
+                    <button
+                      key={track.id}
+                      onClick={() => {
+                        onSelectAudioTrack?.(track.id);
+                        onClose();
+                      }}
+                      className={`w-full h-6 px-3 flex items-center justify-between hover:bg-white/[0.08] text-[11px] transition ${
+                        isSelected ? 'text-amber-400 font-semibold' : 'text-zinc-300'
+                      }`}
+                    >
+                      <span className="truncate">{track.title || track.language || `Track ${track.id}`}</span>
+                      {isSelected && <Check size={11} />}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Subtitle Track Flyout */}
+      <div
+        className="relative"
+        onMouseEnter={() => setActiveSubmenu('subtitle-track')}
+        onMouseLeave={() => setActiveSubmenu(null)}
+      >
+        <div className="w-full h-7 px-3 flex items-center justify-between hover:bg-white/[0.08] text-zinc-300 hover:text-white cursor-pointer transition">
+          <div className="flex items-center gap-2.5">
+            <Subtitles size={13} className="text-zinc-400" />
+            <span>Subtitle Track</span>
+          </div>
+          <ChevronRight size={12} className="text-zinc-500" />
+        </div>
+
+        {activeSubmenu === 'subtitle-track' && (
+          <div className="absolute left-full top-0 w-48 bg-[#0D0E15]/95 backdrop-blur-xl border border-white/[0.1] shadow-2xl py-1 text-zinc-200">
+            <button
+              onClick={() => {
+                onSelectSubtitleTrack?.('off');
+                onClose();
+              }}
+              className={`w-full h-6 px-3 flex items-center justify-between hover:bg-white/[0.08] text-[11px] transition ${
+                selectedSubtitleTrack === 'off' ? 'text-amber-400 font-semibold' : 'text-zinc-300'
+              }`}
+            >
+              <span>None / Off</span>
+              {selectedSubtitleTrack === 'off' && <Check size={11} />}
+            </button>
+            {subtitleTracks.map((track) => {
+              const isSelected = track.id === selectedSubtitleTrack;
+              return (
+                <button
+                  key={track.id}
+                  onClick={() => {
+                    onSelectSubtitleTrack?.(track.id);
+                    onClose();
+                  }}
+                  className={`w-full h-6 px-3 flex items-center justify-between hover:bg-white/[0.08] text-[11px] transition ${
+                    isSelected ? 'text-amber-400 font-semibold' : 'text-zinc-300'
+                  }`}
+                >
+                  <span className="truncate">{track.title || track.language || track.id}</span>
+                  {isSelected && <Check size={11} />}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* Playlist Queue */}
       <button

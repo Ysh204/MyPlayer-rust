@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { tauriClient } from '../../core/tauriClient';
-import type { DrawerPanel, EqPreset, EqState, PlaylistItem, SubtitleConfig, SubtitleCue } from '../../core/types';
+import type { DrawerPanel, EqPreset, EqState, PlaylistItem, SubtitleConfig, SubtitleCue, TrackInfo } from '../../core/types';
 import { TopWindowBar } from './TopWindowBar';
 import { BottomControlsBar } from './BottomControlsBar';
 import { OsdOverlay } from './OsdOverlay';
@@ -70,6 +70,14 @@ export const PlayerScreen: React.FC = () => {
   const [cues, setCues] = useState<SubtitleCue[]>([]);
   const [activeCueText, setActiveCueText] = useState<string>('');
 
+  // Audio & Subtitle Stream Tracks
+  const [audioTracks, setAudioTracks] = useState<TrackInfo[]>([
+    { id: 'default', title: 'Primary Audio (Default / Stereo / 5.1)', isDefault: true },
+  ]);
+  const [selectedAudioTrack, setSelectedAudioTrack] = useState<string>('default');
+  const [subtitleTracks, setSubtitleTracks] = useState<TrackInfo[]>([]);
+  const [selectedSubtitleTrack, setSelectedSubtitleTrack] = useState<string>('default');
+
   const osdTimerRef = useRef<number | null>(null);
   const hudTimerRef = useRef<number | null>(null);
 
@@ -112,6 +120,20 @@ export const PlayerScreen: React.FC = () => {
         ]);
         setPlaylistIndex(0);
         setActiveCueText('Jason: "Are you happy in your life?"\nDaniela: "More than you know."');
+
+        setAudioTracks([
+          { id: 'audio-0', title: 'English [Dolby 5.1 Surround]', language: 'en', isDefault: true },
+          { id: 'audio-1', title: 'English [Stereo 2.0]', language: 'en' },
+          { id: 'audio-2', title: 'Director’s Commentary', language: 'en' },
+        ]);
+        setSelectedAudioTrack('audio-0');
+
+        setSubtitleTracks([
+          { id: 'sub-0', title: 'English [CC] (Full Dialogue)', language: 'en', isDefault: true },
+          { id: 'sub-1', title: 'Spanish (Español Latino)', language: 'es' },
+          { id: 'sub-2', title: 'French (Français)', language: 'fr' },
+        ]);
+        setSelectedSubtitleTrack('sub-0');
       }
     }
   }, []);
@@ -159,26 +181,135 @@ export const PlayerScreen: React.FC = () => {
     } catch {}
   };
 
-  // Open Media File with IMMEDIATE AUTOPLAY
+  // Parse & Set Subtitle Cues from Raw Text
+  const parseAndSetSubtitleCues = useCallback((raw: string, filename?: string) => {
+    const parsed: SubtitleCue[] = [];
+    const toSec = (t: string) => {
+      const [h, m, s] = t.replace(',', '.').split(':').map(Number);
+      return h * 3600 + m * 60 + s;
+    };
+
+    for (const block of raw.trim().split(/\n\s*\n/)) {
+      const lines = block.split('\n');
+      const idx = lines.findIndex((l) => l.includes('-->'));
+      if (idx === -1) continue;
+      const [start, end] = lines[idx].split('-->').map((s) => toSec(s.trim()));
+      const text = lines.slice(idx + 1).join('\n');
+      parsed.push({ start, end, text });
+    }
+    setCues(parsed);
+    if (filename) showOsd(`Subtitles: ${filename}`);
+  }, [showOsd]);
+
+  // Load Subtitle File from Disk via Rust backend
+  const loadExternalSubtitleFile = useCallback(async (filePath: string, title?: string) => {
+    try {
+      const content = await tauriClient.loadSubtitleFile(filePath);
+      if (content) {
+        parseAndSetSubtitleCues(content, title || filePath.split(/[\\/]/).pop());
+      }
+    } catch (err) {
+      console.error('Failed to load subtitle file:', err);
+    }
+  }, [parseAndSetSubtitleCues]);
+
+  // Open Media File by OS file path (from Native Drag & Drop, File Dialog, or Playlist)
+  const handleOpenFilePath = useCallback(
+    async (filePath: string) => {
+      const ext = filePath.split('.').pop()?.toLowerCase() || '';
+
+      // If user dropped an external subtitle file:
+      if (ext === 'srt' || ext === 'vtt' || ext === 'ass' || ext === 'ssa' || ext === 'sub') {
+        const fileName = filePath.split(/[\\/]/).pop() || 'Subtitle';
+        await loadExternalSubtitleFile(filePath, fileName);
+        const newTrack: TrackInfo = {
+          id: `ext-${Date.now()}`,
+          title: fileName,
+          language: 'External',
+          isDefault: true,
+          filePath: filePath,
+        };
+        setSubtitleTracks((prev) => [newTrack, ...prev.filter((t) => !t.id.startsWith('ext-'))]);
+        setSelectedSubtitleTrack(newTrack.id);
+        showOsd(`Subtitles: ${fileName}`);
+        return;
+      }
+
+      try {
+        const media = await tauriClient.openFilePath(filePath);
+        if (media) {
+          setVideoSrc(media.assetUrl);
+          setTitle(media.cleanTitle);
+          showOsd(`Playing: ${media.cleanTitle}`);
+          const newItem: PlaylistItem = {
+            id: media.rawPath,
+            uri: media.assetUrl,
+            title: media.cleanTitle,
+          };
+          setPlaylist((prev) => {
+            if (prev.some((p) => p.id === media.rawPath)) return prev;
+            return [...prev, newItem];
+          });
+          setPlaylistIndex(playlist.length);
+
+          // Populate audio tracks discovered by Rust container inspection
+          if (media.audioTracks && media.audioTracks.length > 0) {
+            setAudioTracks(media.audioTracks);
+            const activeAudio = media.audioTracks.find((a) => a.isDefault) || media.audioTracks[0];
+            setSelectedAudioTrack(activeAudio.id);
+          } else {
+            setAudioTracks([
+              { id: 'default', title: 'Primary Audio (Default / Stereo / 5.1)', isDefault: true },
+            ]);
+            setSelectedAudioTrack('default');
+          }
+
+          // Populate subtitle tracks (embedded MKV tracks + sidecar .srt files)
+          if (media.subtitleTracks && media.subtitleTracks.length > 0) {
+            setSubtitleTracks(media.subtitleTracks);
+            const activeSub = media.subtitleTracks.find((s) => s.isDefault);
+            if (activeSub) {
+              setSelectedSubtitleTrack(activeSub.id);
+              if (activeSub.filePath) {
+                loadExternalSubtitleFile(activeSub.filePath, activeSub.title);
+              }
+            } else {
+              setSelectedSubtitleTrack('off');
+            }
+          } else {
+            setSubtitleTracks([]);
+            setSelectedSubtitleTrack('off');
+          }
+
+          if (videoRef.current) {
+            videoRef.current.src = media.assetUrl;
+            videoRef.current.play().catch(() => {});
+          }
+        }
+      } catch (err) {
+        console.error('Failed to open media by path:', err);
+      }
+    },
+    [loadExternalSubtitleFile, playlist.length, showOsd]
+  );
+
+  // Open Media File with IMMEDIATE AUTOPLAY & Full Stream Track Discovery
   const handleOpenFile = async () => {
     try {
       const media = await tauriClient.pickAndOpenVideo();
-      if (media) {
-        setVideoSrc(media.assetUrl);
-        setTitle(media.cleanTitle);
-        showOsd(`Playing: ${media.cleanTitle}`);
-        const newItem: PlaylistItem = {
-          id: media.rawPath,
-          uri: media.assetUrl,
-          title: media.cleanTitle,
-        };
-        setPlaylist((prev) => [...prev, newItem]);
-        setPlaylistIndex(playlist.length);
-
-        if (videoRef.current) {
-          videoRef.current.src = media.assetUrl;
-          videoRef.current.play().catch(() => {});
+      if (media && media.rawPath) {
+        if (media.rawPath === 'sample.mp4') {
+          // Browser mock mode
+          setVideoSrc(media.assetUrl);
+          setTitle(media.cleanTitle);
+          setAudioTracks(media.audioTracks || []);
+          setSelectedAudioTrack(media.audioTracks?.[0]?.id || 'default');
+          setSubtitleTracks(media.subtitleTracks || []);
+          setSelectedSubtitleTrack(media.subtitleTracks?.[0]?.id || 'off');
+          showOsd(`Playing: ${media.cleanTitle}`);
+          return;
         }
+        await handleOpenFilePath(media.rawPath);
       }
     } catch (err) {
       console.error('Failed to open media:', err);
@@ -243,30 +374,111 @@ export const PlayerScreen: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
     const raw = await file.text();
-    const parsed: SubtitleCue[] = [];
-    const toSec = (t: string) => {
-      const [h, m, s] = t.replace(',', '.').split(':').map(Number);
-      return h * 3600 + m * 60 + s;
-    };
+    parseAndSetSubtitleCues(raw, file.name);
 
-    for (const block of raw.trim().split(/\n\s*\n/)) {
-      const lines = block.split('\n');
-      const idx = lines.findIndex((l) => l.includes('-->'));
-      if (idx === -1) continue;
-      const [start, end] = lines[idx].split('-->').map((s) => toSec(s.trim()));
-      const text = lines.slice(idx + 1).join('\n');
-      parsed.push({ start, end, text });
+    const newTrack: TrackInfo = {
+      id: `external-${Date.now()}`,
+      title: file.name,
+      language: 'External',
+      isDefault: true,
+    };
+    setSubtitleTracks((prev) => [newTrack, ...prev.filter((t) => !t.id.startsWith('external'))]);
+    setSelectedSubtitleTrack(newTrack.id);
+  };
+
+  // Detect Audio and Subtitle Tracks from the HTML5 media element (Fallback if container inspection has none)
+  const detectTracks = useCallback(() => {
+    if (!videoRef.current) return;
+
+    // 1. Audio Tracks (Chromium / WebView2 audioTracks API)
+    const v = videoRef.current as any;
+    if (v && v.audioTracks && v.audioTracks.length > 1) {
+      const detectedAudio: TrackInfo[] = [];
+      for (let i = 0; i < v.audioTracks.length; i++) {
+        const at = v.audioTracks[i];
+        detectedAudio.push({
+          id: at.id || `audio-${i}`,
+          title: at.label || `Audio Track ${i + 1} (${at.language || 'Stereo'})`,
+          language: at.language,
+          isDefault: at.enabled || i === 0,
+        });
+      }
+      setAudioTracks(detectedAudio);
+      const activeAudio = detectedAudio.find((a) => a.isDefault) || detectedAudio[0];
+      if (activeAudio) setSelectedAudioTrack(activeAudio.id);
     }
-    setCues(parsed);
-    showOsd(`Loaded Subtitle: ${file.name}`);
+
+    // 2. Subtitle Tracks (video.textTracks)
+    if (videoRef.current.textTracks && videoRef.current.textTracks.length > 0) {
+      const tt = videoRef.current.textTracks;
+      const detectedSubs: TrackInfo[] = [];
+      for (let i = 0; i < tt.length; i++) {
+        const t = tt[i];
+        detectedSubs.push({
+          id: `embedded-${i}`,
+          title: t.label || `Track ${i + 1} (${t.language || 'Embedded'})`,
+          language: t.language,
+          isDefault: t.mode === 'showing' || i === 0,
+        });
+      }
+      if (detectedSubs.length > 0) {
+        setSubtitleTracks((prev) => {
+          const combined = [...prev];
+          detectedSubs.forEach((ds) => {
+            if (!combined.some((c) => c.id === ds.id)) combined.push(ds);
+          });
+          return combined;
+        });
+      }
+    }
+  }, []);
+
+  const handleSelectAudioTrack = (id: string) => {
+    setSelectedAudioTrack(id);
+    const v = videoRef.current as any;
+    if (v && v.audioTracks && v.audioTracks.length > 0) {
+      for (let i = 0; i < v.audioTracks.length; i++) {
+        v.audioTracks[i].enabled = (v.audioTracks[i].id === id || `audio-${i}` === id);
+      }
+    }
+    const track = audioTracks.find((t) => t.id === id);
+    showOsd(`Audio: ${track?.title || id}`);
+  };
+
+  const handleSelectSubtitleTrack = async (id: string) => {
+    setSelectedSubtitleTrack(id);
+    if (id === 'off') {
+      setActiveCueText('');
+      if (videoRef.current && videoRef.current.textTracks) {
+        for (let i = 0; i < videoRef.current.textTracks.length; i++) {
+          videoRef.current.textTracks[i].mode = 'disabled';
+        }
+      }
+      showOsd('Subtitles: Off');
+      return;
+    }
+
+    const track = subtitleTracks.find((t) => t.id === id);
+    if (track?.filePath) {
+      await loadExternalSubtitleFile(track.filePath, track.title);
+    } else if (videoRef.current && videoRef.current.textTracks) {
+      for (let i = 0; i < videoRef.current.textTracks.length; i++) {
+        videoRef.current.textTracks[i].mode = (id === `embedded-${i}`) ? 'showing' : 'disabled';
+      }
+    }
+    showOsd(`Subtitles: ${track?.title || id}`);
   };
 
   // Match Subtitle Cue Against Video Clock + Delay Offset
   useEffect(() => {
+    if (selectedSubtitleTrack === 'off') {
+      setActiveCueText('');
+      return;
+    }
     const adjusted = currentTime - subConfig.delay_seconds;
     const match = cues.find((c) => adjusted >= c.start && adjusted <= c.end);
     setActiveCueText(match ? match.text : '');
-  }, [currentTime, cues, subConfig.delay_seconds]);
+  }, [currentTime, cues, subConfig.delay_seconds, selectedSubtitleTrack]);
 
   const formatTime = (sec: number) => {
     if (!Number.isFinite(sec) || sec < 0) return '00:00';
@@ -338,6 +550,35 @@ export const PlayerScreen: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showOsd, volume, seekStepSeconds, volumeStepPercent, drawer, settingsOpen, handleSeekDelta, contextMenu]);
 
+  // Native Tauri window drag-and-drop listener (provides OS file paths)
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    try {
+      getCurrentWindow()
+        .onDragDropEvent(async (event) => {
+          if (event.payload.type === 'drop') {
+            setIsDraggingFile(false);
+            const paths = event.payload.paths;
+            if (paths && paths.length > 0) {
+              await handleOpenFilePath(paths[0]);
+            }
+          } else if (event.payload.type === 'enter') {
+            setIsDraggingFile(true);
+          } else if (event.payload.type === 'leave') {
+            setIsDraggingFile(false);
+          }
+        })
+        .then((fn) => {
+          unlisten = fn;
+        })
+        .catch(() => {});
+    } catch (_) {}
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [handleOpenFilePath]);
+
   // Drag and drop handling with AUTOPLAY
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -350,15 +591,46 @@ export const PlayerScreen: React.FC = () => {
     e.preventDefault();
     setIsDraggingFile(false);
     const file = e.dataTransfer.files?.[0];
-    if (file) {
-      const url = URL.createObjectURL(file);
-      setVideoSrc(url);
-      setTitle(file.name.replace(/\.[^/.]+$/, ''));
-      showOsd(`Playing: ${file.name}`);
-      if (videoRef.current) {
-        videoRef.current.src = url;
-        videoRef.current.play().catch(() => {});
-      }
+    if (!file) return;
+
+    // 1. If user drops a subtitle file directly onto the screen
+    const nameLower = file.name.toLowerCase();
+    if (
+      nameLower.endsWith('.srt') ||
+      nameLower.endsWith('.vtt') ||
+      nameLower.endsWith('.ass') ||
+      nameLower.endsWith('.ssa')
+    ) {
+      const text = await file.text();
+      parseAndSetSubtitleCues(text, file.name);
+      const newTrack: TrackInfo = {
+        id: `ext-${Date.now()}`,
+        title: file.name,
+        language: 'External',
+        isDefault: true,
+      };
+      setSubtitleTracks((prev) => [newTrack, ...prev.filter((t) => !t.id.startsWith('ext-'))]);
+      setSelectedSubtitleTrack(newTrack.id);
+      return;
+    }
+
+    // 2. If user drops a video file with accessible OS file path
+    const filePath = (file as unknown as { path?: string }).path;
+    if (filePath) {
+      await handleOpenFilePath(filePath);
+      return;
+    }
+
+    // 3. Fallback for browser drag-drop
+    const url = URL.createObjectURL(file);
+    setVideoSrc(url);
+    setTitle(file.name.replace(/\.[^/.]+$/, ''));
+    showOsd(`Playing: ${file.name}`);
+    setAudioTracks([{ id: 'default', title: 'Primary Audio (Stereo / 5.1)', isDefault: true }]);
+    setSelectedAudioTrack('default');
+    if (videoRef.current) {
+      videoRef.current.src = url;
+      videoRef.current.play().catch(() => {});
     }
   };
 
@@ -414,6 +686,7 @@ export const PlayerScreen: React.FC = () => {
                 onPause={() => setPlaying(false)}
                 onLoadedMetadata={(e) => {
                   setDuration(e.currentTarget.duration);
+                  detectTracks();
                   e.currentTarget.play().catch(() => {});
                 }}
                 onCanPlay={(e) => {
@@ -532,6 +805,12 @@ export const PlayerScreen: React.FC = () => {
                 }
               }}
               hasMedia={Boolean(videoSrc)}
+              audioTracks={audioTracks}
+              selectedAudioTrack={selectedAudioTrack}
+              onSelectAudioTrack={handleSelectAudioTrack}
+              subtitleTracks={subtitleTracks}
+              selectedSubtitleTrack={selectedSubtitleTrack}
+              onSelectSubtitleTrack={handleSelectSubtitleTrack}
             />
           )}
         </main>
@@ -545,12 +824,16 @@ export const PlayerScreen: React.FC = () => {
               setPlaylistIndex(idx);
               const item = playlist[idx];
               if (item) {
-                setVideoSrc(item.uri);
-                setTitle(item.title);
-                showOsd(`Playing: ${item.title}`);
-                if (videoRef.current) {
-                  videoRef.current.src = item.uri;
-                  videoRef.current.play().catch(() => {});
+                if (item.id && !item.id.startsWith('blob:') && !item.id.startsWith('http')) {
+                  handleOpenFilePath(item.id);
+                } else {
+                  setVideoSrc(item.uri);
+                  setTitle(item.title);
+                  showOsd(`Playing: ${item.title}`);
+                  if (videoRef.current) {
+                    videoRef.current.src = item.uri;
+                    videoRef.current.play().catch(() => {});
+                  }
                 }
               }
             }}
@@ -577,6 +860,9 @@ export const PlayerScreen: React.FC = () => {
             eq={eq}
             presets={presets}
             afFilterPreview={afString}
+            audioTracks={audioTracks}
+            selectedAudioTrackId={selectedAudioTrack}
+            onSelectAudioTrack={handleSelectAudioTrack}
             onChange={handleEqChange}
             onReset={() => handleEqChange(INITIAL_EQ, 'Equalizer Reset')}
           />
@@ -585,6 +871,9 @@ export const PlayerScreen: React.FC = () => {
         {drawer === 'subtitles' && (
           <SubtitlePanel
             config={subConfig}
+            subtitleTracks={subtitleTracks}
+            selectedSubtitleTrackId={selectedSubtitleTrack}
+            onSelectSubtitleTrack={handleSelectSubtitleTrack}
             onChange={handleSubChange}
             onLoadSrtFile={handleLoadSrt}
           />

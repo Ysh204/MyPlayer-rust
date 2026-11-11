@@ -39,6 +39,7 @@ export interface TrackInfo {
   language?: string;
   codec?: string;
   isDefault?: boolean;
+  filePath?: string;
 }
 
 export type DrawerPanel = 'none' | 'audio' | 'subtitles' | 'playlist';
