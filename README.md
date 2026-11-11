@@ -6,6 +6,50 @@ Featuring a razor-sharp, obsidian-glass aesthetic, immediate autoplay, buttery-s
 
 ---
 
+## UI Showcase
+
+### 🎬 Main Playback Viewport & Obsidian Controls
+> Razor-sharp, vertically compact playbar with sharp right angles, glassmorphism backdrop, 150% volume headroom, and custom frameless top window bar. Keyboard seeks update with discreet OSD toasts without interrupting cinema viewing.
+
+![Main Playback Interface](docs/screenshots/01_main_player.png)
+
+---
+
+### ⚡ Custom Obsidian Context Menu
+> Full-featured right-click context menu offering instant playback speed selection, loop toggling, audio & subtitle drawers, frame snapshots, and fullscreen controls.
+
+![Right-Click Context Menu](docs/screenshots/02_context_menu.png)
+
+---
+
+### 🎚️ 5-Band Parametric Audio Equalizer & DSP
+> Real-time FFmpeg `lavfi` audio filter graph compilation in Rust, preamp gain (-12dB to +12dB), dynamic Night Mode compressor (tames loud explosions, boosts whisper dialogue), and audio sync calibration.
+
+![5-Band Parametric Equalizer Panel](docs/screenshots/03_equalizer_panel.png)
+
+---
+
+### 💬 Precision Subtitle Framing & Calibration
+> Vertical placement slider (10% to 105%) that lets you frame subtitles directly into the bottom letterbox black bar, font scaling, backdrop box opacity, and millisecond delay sync.
+
+![Subtitle Framing & Formatting Panel](docs/screenshots/04_subtitle_panel.png)
+
+---
+
+### 📑 Reorderable Playlist Queue
+> Slide-out queue drawer supporting drag-and-drop multi-file video loading, active playback indicators, track numbering, and quick track removal.
+
+![Playlist Queue Drawer](docs/screenshots/05_playlist_queue.png)
+
+---
+
+### ⚙️ Playback Settings & Hardware Acceleration
+> Configurable GPU hardware decoding (`hwdec: auto-safe` via D3D11VA / NVDEC), frame-accurate precision seeking (`hr-seek`), auto-resume playback position memory, and configurable seek/volume step intervals.
+
+![Playback Settings Modal](docs/screenshots/06_playback_settings.png)
+
+---
+
 ## Key Highlights
 
 - **Razor-Sharp Obsidian HUD**: Compact, vertically small playbar with zero bulky curved pills or emojis. Styled with translucent dark glassmorphism and subtle hairline borders.

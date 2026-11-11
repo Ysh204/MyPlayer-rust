@@ -9,7 +9,14 @@ interface TopWindowBarProps {
 }
 
 export const TopWindowBar: React.FC<TopWindowBarProps> = ({ title, visible, onOpenSettings }) => {
-  const appWindow = getCurrentWindow();
+  const getAppWindow = () => {
+    try {
+      if (typeof window !== 'undefined' && (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) {
+        return getCurrentWindow();
+      }
+    } catch (_) {}
+    return null;
+  };
 
   return (
     <header
@@ -41,21 +48,21 @@ export const TopWindowBar: React.FC<TopWindowBarProps> = ({ title, visible, onOp
         <div className="w-px h-3 bg-white/10 mx-1" />
 
         <button
-          onClick={() => appWindow.minimize()}
+          onClick={() => getAppWindow()?.minimize()}
           className="w-8 h-8 flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/[0.08] transition"
           title="Minimize"
         >
           <Minus size={12} />
         </button>
         <button
-          onClick={() => appWindow.toggleMaximize()}
+          onClick={() => getAppWindow()?.toggleMaximize()}
           className="w-8 h-8 flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/[0.08] transition"
           title="Maximize"
         >
           <Square size={10} />
         </button>
         <button
-          onClick={() => appWindow.close()}
+          onClick={() => getAppWindow()?.close()}
           className="w-8 h-8 flex items-center justify-center text-zinc-400 hover:text-white hover:bg-red-600 transition"
           title="Close"
         >

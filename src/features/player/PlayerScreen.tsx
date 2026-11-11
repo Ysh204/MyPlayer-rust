@@ -91,6 +91,29 @@ export const PlayerScreen: React.FC = () => {
 
   useEffect(() => {
     tauriClient.getEqPresets().then(setPresets).catch(() => {});
+
+    if (typeof window !== 'undefined') {
+      const p = new URLSearchParams(window.location.search);
+      const d = p.get('drawer') as DrawerPanel;
+      if (d) setDrawer(d);
+      if (p.get('menu') === 'true') setContextMenu({ x: 440, y: 180 });
+      if (p.get('settings') === 'true') setSettingsOpen(true);
+      if (p.get('sample') === 'true') {
+        setTitle('Dark Matter (2024) - S01E01 - Are You Happy in Your Life');
+        setVideoSrc('sample://preview');
+        setPlaying(true);
+        setCurrentTime(1482);
+        setDuration(3245);
+        setPlaylist([
+          { id: '1', title: 'Dark Matter - S01E01 - Are You Happy in Your Life', uri: 'sample://1' },
+          { id: '2', title: 'Dark Matter - S01E02 - Trip of a Lifetime', uri: 'sample://2' },
+          { id: '3', title: 'Dark Matter - S01E03 - The Box', uri: 'sample://3' },
+          { id: '4', title: 'Dark Matter - S01E04 - The Corridor', uri: 'sample://4' },
+        ]);
+        setPlaylistIndex(0);
+        setActiveCueText('Jason: "Are you happy in your life?"\nDaniela: "More than you know."');
+      }
+    }
   }, []);
 
   // Smooth 60fps continuous timeline playback clock via requestAnimationFrame
@@ -372,25 +395,33 @@ export const PlayerScreen: React.FC = () => {
         >
           {/* Video Element with Autoplay */}
           {videoSrc ? (
-            <video
-              ref={videoRef}
-              src={videoSrc}
-              autoPlay
-              loop={loop}
-              onPlay={() => {
-                setPlaying(true);
-                bumpHud();
-              }}
-              onPause={() => setPlaying(false)}
-              onLoadedMetadata={(e) => {
-                setDuration(e.currentTarget.duration);
-                e.currentTarget.play().catch(() => {});
-              }}
-              onCanPlay={(e) => {
-                e.currentTarget.play().catch(() => {});
-              }}
-              className="w-full h-full object-contain"
-            />
+            videoSrc === 'sample://preview' ? (
+              <img
+                src="/sample_frame.jpg"
+                alt="Sample Video Playback"
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <video
+                ref={videoRef}
+                src={videoSrc}
+                autoPlay
+                loop={loop}
+                onPlay={() => {
+                  setPlaying(true);
+                  bumpHud();
+                }}
+                onPause={() => setPlaying(false)}
+                onLoadedMetadata={(e) => {
+                  setDuration(e.currentTarget.duration);
+                  e.currentTarget.play().catch(() => {});
+                }}
+                onCanPlay={(e) => {
+                  e.currentTarget.play().catch(() => {});
+                }}
+                className="w-full h-full object-contain"
+              />
+            )
           ) : (
             /* Minimalist Sharp Empty State (Right-Angled, Clean, No Bloat) */
             <div className="relative z-10 flex flex-col items-center justify-center text-center p-6 max-w-sm animate-in fade-in duration-200">
