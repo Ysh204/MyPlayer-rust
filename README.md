@@ -177,13 +177,46 @@ cd src-tauri
 cargo test -j 1
 ```
 
-### 4. Build Release Binary / Installer
+### 4. Build Release Installers & Standalone Binary
 
-Generates the optimized release executable in `src-tauri/target/release/my_player.exe`:
+Generates the NSIS installer (`.exe`), MSI package, and portable standalone binary:
 
 ```bash
 bun run tauri build
 ```
+
+Generated distribution artifacts:
+- **NSIS Setup Installer**: `src-tauri/target/release/bundle/nsis/MyPlayer Pro_1.0.0_x64-setup.exe`
+- **MSI Windows Installer**: `src-tauri/target/release/bundle/msi/MyPlayer Pro_1.0.0_x64_en-US.msi`
+- **Standalone Portable EXE**: `src-tauri/target/release/my_player.exe`
+
+You can also run the release packager to prepare ready-to-upload files in `releases/`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/package_releases.ps1
+```
+
+---
+
+## Publishing to GitHub Releases
+
+### Option A: Automated via GitHub Actions (Recommended)
+Push a git tag and GitHub Actions will automatically compile and attach the release artifacts:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+### Option B: Manual Upload
+1. Go to your repository on GitHub (`https://github.com/<username>/my_player_rust`).
+2. Click **Releases** → **Draft a new release**.
+3. Set the tag to `v1.0.0`.
+4. Drag and drop the files from the local [`releases/`](file:///d:/projects/my_player_rust/releases/) folder into the **Attach binaries** section:
+   - `MyPlayer-Pro_1.0.0_x64-setup.exe`
+   - `MyPlayer-Pro_1.0.0_x64_en-US.msi`
+   - `MyPlayer-Pro_1.0.0_x64_portable.zip`
+5. Click **Publish release**.
 
 ---
 

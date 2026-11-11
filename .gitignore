@@ -20,6 +20,8 @@ src-tauri/target/
 Cargo.lock
 
 # Tauri build outputs & installers
+releases/
+app-icon.png
 src-tauri/gen/
 *.msi
 *.exe
