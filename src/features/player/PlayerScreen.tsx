@@ -253,21 +253,26 @@ export const PlayerScreen: React.FC = () => {
     return h > 0 ? `${h}:${m}:${s}` : `${m}:${s}`;
   };
 
-  // Global Keyboard shortcuts
+  // Global Keyboard shortcuts (does NOT pop up HUD bars on seek / volume)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
-      bumpHud();
       if (e.code === 'Space') {
         e.preventDefault();
         if (videoRef.current) {
-          videoRef.current.paused ? videoRef.current.play() : videoRef.current.pause();
+          if (videoRef.current.paused) {
+            videoRef.current.play().catch(() => {});
+            showOsd('Play');
+          } else {
+            videoRef.current.pause();
+            showOsd('Pause');
+          }
         }
-      } else if (e.code === 'ArrowLeft') {
+      } else if (e.code === 'ArrowLeft' || e.code === 'KeyJ') {
         e.preventDefault();
         handleSeekDelta(-seekStepSeconds);
-      } else if (e.code === 'ArrowRight') {
+      } else if (e.code === 'ArrowRight' || e.code === 'KeyL') {
         e.preventDefault();
         handleSeekDelta(seekStepSeconds);
       } else if (e.code === 'ArrowUp') {
@@ -308,7 +313,7 @@ export const PlayerScreen: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [bumpHud, showOsd, volume, seekStepSeconds, volumeStepPercent, drawer, settingsOpen, handleSeekDelta, contextMenu]);
+  }, [showOsd, volume, seekStepSeconds, volumeStepPercent, drawer, settingsOpen, handleSeekDelta, contextMenu]);
 
   // Drag and drop handling with AUTOPLAY
   const handleDragOver = (e: React.DragEvent) => {
@@ -340,7 +345,9 @@ export const PlayerScreen: React.FC = () => {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className="relative w-screen h-screen bg-black text-white overflow-hidden flex flex-col select-none"
+      className={`relative w-screen h-screen bg-black text-white overflow-hidden flex flex-col select-none ${
+        !hudVisible && Boolean(videoSrc) && drawer === 'none' && !settingsOpen && !contextMenu ? 'cursor-none' : ''
+      }`}
     >
       {/* 1. Custom Minimalist Frameless Top Window Bar */}
       <TopWindowBar
@@ -370,7 +377,10 @@ export const PlayerScreen: React.FC = () => {
               src={videoSrc}
               autoPlay
               loop={loop}
-              onPlay={() => setPlaying(true)}
+              onPlay={() => {
+                setPlaying(true);
+                bumpHud();
+              }}
               onPause={() => setPlaying(false)}
               onLoadedMetadata={(e) => {
                 setDuration(e.currentTarget.duration);
