@@ -3,14 +3,14 @@ import type { DrawerPanel } from '../../core/types';
 import {
   Play,
   Pause,
-  RotateCcw,
-  RotateCw,
+  Rewind,
+  FastForward,
   Volume2,
   VolumeX,
   FolderOpen,
   ListMusic,
-  Sliders,
-  Subtitles,
+  SlidersHorizontal,
+  Captions,
   Maximize,
   Minimize,
 } from 'lucide-react';
@@ -32,6 +32,24 @@ interface BottomControlsBarProps {
   onToggleFullscreen?: () => void;
   formatTime: (sec: number) => string;
 }
+
+const IconButton: React.FC<React.ButtonHTMLAttributes<HTMLButtonElement> & { active?: boolean }> = ({
+  active,
+  className,
+  children,
+  ...props
+}) => (
+  <button
+    className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all duration-150 active:scale-90 ${
+      active
+        ? 'accent-gradient-soft text-white shadow-lg'
+        : 'text-zinc-300 hover:text-white hover:bg-white/10'
+    } ${className ?? ''}`}
+    {...props}
+  >
+    {children}
+  </button>
+);
 
 export const BottomControlsBar: React.FC<BottomControlsBarProps> = ({
   currentTime,
@@ -75,146 +93,100 @@ export const BottomControlsBar: React.FC<BottomControlsBarProps> = ({
     onSeek(ratio * duration);
   };
 
+  const volPct = isMuted ? 0 : Math.min(volume, 100);
+
   return (
     <div
-      className={`fixed bottom-4 left-1/2 -translate-x-1/2 w-[95%] max-w-2xl z-40 transition-opacity duration-200 select-none ${
-        hudVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+      className={`fixed bottom-6 left-1/2 -translate-x-1/2 w-[min(94vw,880px)] z-40 select-none transition-all duration-300 ${
+        hudVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3 pointer-events-none'
       }`}
     >
-      {/* Sharp Right-Angled Obsidian Bar - Vertically Small & Sleek (No Curvy Angles) */}
-      <div className="rounded-none bg-[#090A0E]/92 backdrop-blur-xl border border-white/[0.08] shadow-[0_16px_40px_rgba(0,0,0,0.9)] px-3 py-2 flex flex-col gap-1.5">
-        
-        {/* Row 1: Compact Transport Controls & Tools */}
-        <div className="flex items-center justify-between h-7 text-xs">
-          
-          {/* Left: Volume & Open File */}
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={toggleMute}
-              className="w-6 h-6 flex items-center justify-center text-zinc-400 hover:text-white transition"
-              title={volume === 0 || isMuted ? 'Unmute (M)' : 'Mute (M)'}
-            >
-              {volume === 0 || isMuted ? <VolumeX size={13} /> : <Volume2 size={13} />}
-            </button>
-
+      <div className="glass rounded-[22px] px-4 pt-3.5 pb-3.5 flex flex-col gap-3">
+        {/* Transport row */}
+        <div className="flex items-center gap-2">
+          {/* Volume */}
+          <div className="flex items-center gap-2 shrink-0">
+            <IconButton onClick={toggleMute} title={volume === 0 || isMuted ? 'Unmute (M)' : 'Mute (M)'}>
+              {volume === 0 || isMuted ? <VolumeX size={17} /> : <Volume2 size={17} />}
+            </IconButton>
             <input
               type="range"
               min={0}
-              max={150}
-              value={isMuted ? 0 : volume}
+              max={100}
+              value={volPct}
               onChange={(e) => {
                 setIsMuted(false);
                 onVolumeChange(parseInt(e.target.value, 10));
               }}
-              className="w-14 sharp-slider"
+              className="hidden sm:block w-24 min-slider"
+              style={{ ['--progress' as any]: `${volPct}%` }}
               title={`Volume: ${volume}%`}
             />
-
-            <span className="text-[10px] font-mono text-zinc-400 w-6 text-right tabular-nums">
-              {isMuted ? '0%' : `${volume}%`}
+            <span className="hidden sm:block text-[11px] text-zinc-400 tabular-nums w-8 font-mono">
+              {isMuted ? '0' : volume}
             </span>
-
-            <div className="w-px h-3 bg-white/10 mx-1" />
-
-            <button
-              onClick={onOpenFile}
-              className="h-6 px-2 flex items-center gap-1 text-[11px] font-medium text-zinc-300 hover:text-white hover:bg-white/[0.08] transition"
-              title="Open Video File (Ctrl+O)"
-            >
-              <FolderOpen size={12} className="text-amber-400" />
-              <span>Open</span>
-            </button>
           </div>
 
-          {/* Center: Play/Pause, Fast Forward & Rewind */}
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => onSeekDelta(-5)}
-              className="w-6 h-6 flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/[0.08] transition active:scale-90"
-              title="Rewind 5s (←)"
-            >
-              <RotateCcw size={13} />
-            </button>
-
-            {/* Sharp Right-Angled Play/Pause Button */}
+          {/* Center: playback */}
+          <div className="flex items-center gap-1.5 mx-auto">
+            <IconButton onClick={() => onSeekDelta(-5)} title="Rewind 5s (←)">
+              <Rewind size={17} />
+            </IconButton>
             <button
               onClick={onTogglePlay}
-              className="w-7 h-7 bg-white/[0.1] hover:bg-white/[0.18] border border-white/15 text-amber-400 flex items-center justify-center transition active:scale-95"
+              className="w-12 h-12 rounded-full accent-gradient-soft text-white flex items-center justify-center hover:scale-105 active:scale-95 transition-all duration-150 shadow-[0_8px_28px_rgba(99,102,241,0.45)] shrink-0"
               title={playing ? 'Pause (Space)' : 'Play (Space)'}
             >
               {playing ? (
-                <Pause size={13} className="fill-current text-amber-400" />
+                <Pause size={20} className="fill-white" />
               ) : (
-                <Play size={13} className="fill-current text-amber-400 ml-0.5" />
+                <Play size={20} className="fill-white ml-0.5" />
               )}
             </button>
-
-            <button
-              onClick={() => onSeekDelta(5)}
-              className="w-6 h-6 flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/[0.08] transition active:scale-90"
-              title="Fast Forward 5s (→)"
-            >
-              <RotateCw size={13} />
-            </button>
+            <IconButton onClick={() => onSeekDelta(5)} title="Forward 5s (→)">
+              <FastForward size={17} />
+            </IconButton>
           </div>
 
-          {/* Right: Feature Toggles */}
-          <div className="flex items-center gap-1">
-            <button
+          {/* Right: tools */}
+          <div className="flex items-center gap-1 shrink-0">
+            <IconButton onClick={onOpenFile} title="Open (Ctrl+O)">
+              <FolderOpen size={17} />
+            </IconButton>
+            <IconButton
               onClick={() => onToggleDrawer(drawer === 'playlist' ? 'none' : 'playlist')}
-              className={`h-6 px-2 text-[10.5px] font-medium flex items-center gap-1 transition ${
-                drawer === 'playlist'
-                  ? 'bg-amber-500/20 text-amber-400'
-                  : 'text-zinc-400 hover:text-white hover:bg-white/[0.08]'
-              }`}
-              title="Playlist Queue"
+              active={drawer === 'playlist'}
+              title="Queue"
             >
-              <ListMusic size={12} />
-              <span>Queue</span>
-            </button>
-
-            <button
+              <ListMusic size={17} />
+            </IconButton>
+            <IconButton
               onClick={() => onToggleDrawer(drawer === 'audio' ? 'none' : 'audio')}
-              className={`h-6 px-2 text-[10.5px] font-medium flex items-center gap-1 transition ${
-                drawer === 'audio'
-                  ? 'bg-amber-500/20 text-amber-400'
-                  : 'text-zinc-400 hover:text-white hover:bg-white/[0.08]'
-              }`}
-              title="Audio Equalizer"
+              active={drawer === 'audio'}
+              title="Audio & EQ"
             >
-              <Sliders size={12} />
-              <span>EQ</span>
-            </button>
-
-            <button
+              <SlidersHorizontal size={17} />
+            </IconButton>
+            <IconButton
               onClick={() => onToggleDrawer(drawer === 'subtitles' ? 'none' : 'subtitles')}
-              className={`h-6 px-2 text-[10.5px] font-medium flex items-center gap-1 transition ${
-                drawer === 'subtitles'
-                  ? 'bg-amber-500/20 text-amber-400'
-                  : 'text-zinc-400 hover:text-white hover:bg-white/[0.08]'
-              }`}
+              active={drawer === 'subtitles'}
               title="Subtitles"
             >
-              <Subtitles size={12} />
-              <span>Subs</span>
-            </button>
-
+              <Captions size={17} />
+            </IconButton>
             {onToggleFullscreen && (
-              <button
-                onClick={onToggleFullscreen}
-                className="w-6 h-6 flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/[0.08] transition ml-0.5"
-                title="Fullscreen (F)"
-              >
-                {isFullScreen ? <Minimize size={12} /> : <Maximize size={12} />}
-              </button>
+              <IconButton onClick={onToggleFullscreen} title="Fullscreen (F)">
+                {isFullScreen ? <Minimize size={16} /> : <Maximize size={16} />}
+              </IconButton>
             )}
           </div>
         </div>
 
-        {/* Row 2: Smooth 60fps Razor-Thin Timeline */}
-        <div className="flex items-center gap-2 pt-0.5 text-[10px] font-mono text-zinc-400 select-none">
-          <span className="w-10 text-left tabular-nums shrink-0">{formatTime(currentTime)}</span>
-
+        {/* Timeline */}
+        <div className="flex items-center gap-3">
+          <span className="text-[11.5px] font-mono text-zinc-300 tabular-nums shrink-0 w-12 text-right">
+            {formatTime(currentTime)}
+          </span>
           <div
             ref={trackRef}
             onClick={handleTrackClick}
@@ -224,32 +196,29 @@ export const BottomControlsBar: React.FC<BottomControlsBarProps> = ({
               setHoverPosition(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)));
             }}
             onMouseLeave={() => setHoverPosition(null)}
-            className="relative flex-1 h-3 flex items-center cursor-pointer group"
+            className="relative flex-1 h-6 flex items-center cursor-pointer group"
           >
-            {/* Base Track */}
-            <div className="w-full h-[2px] group-hover:h-[3px] bg-white/[0.15] relative transition-all duration-100">
-              {/* Played Progress Bar */}
+            <div className="relative w-full h-[5px] group-hover:h-[7px] rounded-full bg-white/[0.13] transition-all duration-150 overflow-hidden">
               <div
-                className="h-full bg-amber-400 relative"
+                className="absolute inset-y-0 left-0 rounded-full accent-gradient"
                 style={{ width: `${progressPercent}%` }}
-              >
-                {/* Tiny Square Playhead */}
-                <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1.5 h-3 bg-white shadow-[0_0_6px_#f59e0b] opacity-0 group-hover:opacity-100 transition-opacity" />
-              </div>
-
-              {/* Hover Position Ghost Bar */}
+              />
               {hoverPosition !== null && (
                 <div
-                  className="absolute top-0 bottom-0 bg-white/20 pointer-events-none"
+                  className="absolute inset-y-0 left-0 bg-white/20 pointer-events-none"
                   style={{ width: `${hoverPosition * 100}%` }}
                 />
               )}
             </div>
+            <div
+              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 rounded-full bg-white shadow-[0_2px_10px_rgba(99,102,241,0.6)] opacity-0 group-hover:opacity-100 scale-75 group-hover:scale-100 transition pointer-events-none"
+              style={{ left: `${progressPercent}%` }}
+            />
           </div>
-
-          <span className="w-10 text-right tabular-nums shrink-0">{formatTime(duration)}</span>
+          <span className="text-[11.5px] font-mono text-zinc-500 tabular-nums shrink-0 w-12">
+            {formatTime(duration)}
+          </span>
         </div>
-
       </div>
     </div>
   );

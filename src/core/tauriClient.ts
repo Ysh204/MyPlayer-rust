@@ -1,6 +1,6 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { EqPreset, EqState, SubtitleConfig, TrackInfo } from './types';
+import type { EqPreset, EqState, SubtitleConfig, SubtitleCue, TrackInfo } from './types';
 
 const isTauri = typeof window !== 'undefined' && Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
 
@@ -67,9 +67,43 @@ export const tauriClient = {
     };
   },
 
+  /** Instant path → playable URL with no heavy inspection. */
+  openFilePathInstant(path: string): OpenMediaResult {
+    const cleanTitle = path.split(/[\\/]/).pop()?.replace(/\.[^/.]+$/, '') || 'Media';
+    return {
+      rawPath: path,
+      assetUrl: isTauri ? convertFileSrc(path) : path,
+      cleanTitle,
+      audioTracks: [],
+      subtitleTracks: [],
+    };
+  },
+
+  /** Lightweight background inspection (lines + sidecars) — call after playback starts. */
+  async inspectMediaTracks(path: string): Promise<Pick<OpenMediaResult, 'audioTracks' | 'subtitleTracks'>> {
+    if (!isTauri) return { audioTracks: [], subtitleTracks: [] };
+    try {
+      const res = await invoke<{ audioTracks: TrackInfo[]; subtitleTracks: TrackInfo[] }>(
+        'inspect_media_tracks',
+        { path },
+      );
+      return { audioTracks: res.audioTracks, subtitleTracks: res.subtitleTracks };
+    } catch {
+      return { audioTracks: [], subtitleTracks: [] };
+    }
+  },
+
   async loadSubtitleFile(filePath: string): Promise<string> {
     if (!isTauri) return '';
     return invoke<string>('load_subtitle_file', { path: filePath });
+  },
+
+  async extractEmbeddedSubtitles(filePath: string, trackNum: number): Promise<SubtitleCue[]> {
+    if (!isTauri) return [];
+    return invoke<SubtitleCue[]>('extract_subtitles_for_track', {
+      path: filePath,
+      trackNum,
+    });
   },
 
   async syncAudioEq(eq: EqState): Promise<string> {

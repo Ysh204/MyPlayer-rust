@@ -1,6 +1,15 @@
 use std::fs::File;
 use std::path::Path;
 use serde::{Deserialize, Serialize};
+use matroska_demuxer::{Frame, MatroskaFile};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubtitleCueItem {
+    pub start: f64,
+    pub end: f64,
+    pub text: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -229,5 +238,72 @@ fn detect_language_from_name(name: &str) -> Option<String> {
         Some("ja".to_string())
     } else {
         None
+    }
+}
+
+pub fn extract_embedded_subtitles(file_path: &str, target_track: u64) -> Vec<SubtitleCueItem> {
+    let mut cues = Vec::new();
+    let file = match File::open(file_path) {
+        Ok(f) => f,
+        Err(_) => return cues,
+    };
+
+    let mut mkv = match MatroskaFile::open(file) {
+        Ok(m) => m,
+        Err(_) => return cues,
+    };
+
+    let mut frame = Frame::default();
+    while let Ok(true) = mkv.next_frame(&mut frame) {
+        if frame.track == target_track {
+            if let Ok(text) = std::str::from_utf8(&frame.data) {
+                let clean_text = clean_subtitle_payload(text);
+                if !clean_text.is_empty() {
+                    let start = frame.timestamp as f64 / 1_000_000_000.0;
+                    cues.push(SubtitleCueItem {
+                        start,
+                        end: start + 3.5,
+                        text: clean_text,
+                    });
+                }
+            }
+        }
+    }
+
+    // Adjust end timestamps so each cue doesn't overlap the next
+    for i in 0..cues.len() {
+        let max_end = cues[i].start + 5.0;
+        if i + 1 < cues.len() {
+            let next_start = cues[i + 1].start;
+            if next_start > cues[i].start && next_start < max_end {
+                cues[i].end = next_start;
+            } else {
+                cues[i].end = max_end;
+            }
+        } else {
+            cues[i].end = max_end;
+        }
+    }
+
+    cues
+}
+
+fn clean_subtitle_payload(raw: &str) -> String {
+    let s = raw.trim();
+    if s.is_empty() {
+        return String::new();
+    }
+    // If ASS dialogue line: e.g. "Dialogue: 0,0:01:23.45,0:01:25.67,Default,,0,0,0,,Hello world"
+    let text = if let Some(idx) = s.rfind(",,") {
+        &s[idx + 2..]
+    } else {
+        s
+    };
+    // Strip ASS inline styling tags like {\an8}, {\i1}, {\b1}, {\c&H...&}
+    if let Ok(re_tags) = regex::Regex::new(r"\{[^}]*\}") {
+        let stripped = re_tags.replace_all(text, "");
+        stripped.replace("\\N", "\n").replace("\\n", "\n").trim().to_string()
+    } else {
+        text.replace("\\N", "\n").replace("\\n", "\n").trim().to_string()
     }
 }
