@@ -14,7 +14,10 @@ pub fn run() {
         .manage(Mutex::new(AppState::default()))
         .invoke_handler(tauri::generate_handler![
             commands::open_media_file,
+            commands::open_media_file_fast,
+            commands::inspect_media_tracks,
             commands::load_subtitle_file,
+            commands::extract_subtitles_for_track,
             commands::get_eq_presets,
             commands::update_audio_eq,
             commands::update_subtitle_config,

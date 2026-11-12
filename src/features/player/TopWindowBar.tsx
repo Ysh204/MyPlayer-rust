@@ -1,6 +1,6 @@
 import React from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Minus, Square, X, SlidersHorizontal } from 'lucide-react';
+import { Minus, Square, X, Settings2, Play } from 'lucide-react';
 
 interface TopWindowBarProps {
   title: string;
@@ -21,52 +21,54 @@ export const TopWindowBar: React.FC<TopWindowBarProps> = ({ title, visible, onOp
   return (
     <header
       data-tauri-drag-region
-      className={`fixed top-0 left-0 right-0 z-40 h-8 px-3 flex items-center justify-between
-        bg-[#090A0E]/90 backdrop-blur-md border-b border-white/[0.08] transition-opacity duration-200 select-none ${
-          visible ? 'opacity-100' : 'opacity-0 pointer-events-none'
-        }`}
+      className={`fixed top-0 left-0 right-0 z-40 h-11 px-4 flex items-center justify-between transition-all duration-300 select-none ${
+        visible ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2 pointer-events-none'
+      }`}
+      style={{
+        background: 'linear-gradient(to bottom, rgba(5,5,7,0.65), rgba(5,5,7,0.25) 70%, transparent)',
+        backdropFilter: 'blur(6px)',
+        WebkitBackdropFilter: 'blur(6px)',
+      }}
     >
-      {/* Title & Amber Brand Dot */}
-      <div className="flex items-center gap-2 pointer-events-none truncate max-w-lg">
-        <span className="w-1.5 h-1.5 bg-amber-500 shadow-[0_0_6px_#f59e0b] shrink-0" />
-        <span className="text-[11px] font-medium tracking-tight text-zinc-300 truncate">
+      <div className="flex items-center gap-2.5 pointer-events-none min-w-0">
+        <span className="w-6 h-6 rounded-lg accent-gradient-soft flex items-center justify-center shrink-0 shadow-lg">
+          <Play size={11} className="text-white fill-white ml-px" />
+        </span>
+        <span className="text-[13px] font-display font-600 tracking-tight text-zinc-100 truncate">
           {title}
         </span>
       </div>
 
-      {/* Sharp Right-Angled Window Controls */}
-      <div className="flex items-center">
+      <div className="flex items-center gap-1">
         <button
           onClick={onOpenSettings}
-          className="h-8 px-2 flex items-center gap-1.5 text-[11px] text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.08] transition"
-          title="Playback Settings"
+          className="h-7 px-2.5 rounded-lg flex items-center gap-1.5 text-[12px] text-zinc-400 hover:text-white hover:bg-white/10 transition"
+          title="Settings"
         >
-          <SlidersHorizontal size={12} className="text-zinc-400" />
-          <span>Settings</span>
+          <Settings2 size={13} />
+          <span className="hidden sm:inline">Settings</span>
         </button>
-
-        <div className="w-px h-3 bg-white/10 mx-1" />
-
+        <div className="w-px h-4 bg-white/10 mx-1.5" />
         <button
           onClick={() => getAppWindow()?.minimize()}
-          className="w-8 h-8 flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/[0.08] transition"
+          className="w-8 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition"
           title="Minimize"
         >
-          <Minus size={12} />
+          <Minus size={13} />
         </button>
         <button
           onClick={() => getAppWindow()?.toggleMaximize()}
-          className="w-8 h-8 flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/[0.08] transition"
+          className="w-8 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition"
           title="Maximize"
         >
           <Square size={10} />
         </button>
         <button
           onClick={() => getAppWindow()?.close()}
-          className="w-8 h-8 flex items-center justify-center text-zinc-400 hover:text-white hover:bg-red-600 transition"
+          className="w-8 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition"
           title="Close"
         >
-          <X size={12} />
+          <X size={13} />
         </button>
       </div>
     </header>

@@ -71,15 +71,22 @@ export const PlayerScreen: React.FC = () => {
   const [activeCueText, setActiveCueText] = useState<string>('');
 
   // Audio & Subtitle Stream Tracks
+  const [activeMediaRawPath, setActiveMediaRawPath] = useState<string>('');
   const [audioTracks, setAudioTracks] = useState<TrackInfo[]>([
     { id: 'default', title: 'Primary Audio (Default / Stereo / 5.1)', isDefault: true },
   ]);
   const [selectedAudioTrack, setSelectedAudioTrack] = useState<string>('default');
   const [subtitleTracks, setSubtitleTracks] = useState<TrackInfo[]>([]);
-  const [selectedSubtitleTrack, setSelectedSubtitleTrack] = useState<string>('default');
+  const [selectedSubtitleTrack, setSelectedSubtitleTrack] = useState<string>('off');
+
+  const [isLoading, setIsLoading] = useState<boolean>(false);
 
   const osdTimerRef = useRef<number | null>(null);
   const hudTimerRef = useRef<number | null>(null);
+  const openSeqRef = useRef(0);
+  // Refs for values used inside async callbacks without re-creating them
+  const playlistRef = useRef<PlaylistItem[]>([]);
+  playlistRef.current = playlist;
 
   const showOsd = useCallback((msg: string) => {
     setOsdMessage(msg);
@@ -213,12 +220,13 @@ export const PlayerScreen: React.FC = () => {
     }
   }, [parseAndSetSubtitleCues]);
 
-  // Open Media File by OS file path (from Native Drag & Drop, File Dialog, or Playlist)
+  // Open media: start playback IMMEDIATELY, inspect tracks in background.
+  // The old path awaited full MKV parsing + embedded-subtitle extraction *before*
+  // setting the video src — that blocked the UI for seconds on large files.
   const handleOpenFilePath = useCallback(
     async (filePath: string) => {
       const ext = filePath.split('.').pop()?.toLowerCase() || '';
 
-      // If user dropped an external subtitle file:
       if (ext === 'srt' || ext === 'vtt' || ext === 'ass' || ext === 'ssa' || ext === 'sub') {
         const fileName = filePath.split(/[\\/]/).pop() || 'Subtitle';
         await loadExternalSubtitleFile(filePath, fileName);
@@ -235,62 +243,72 @@ export const PlayerScreen: React.FC = () => {
         return;
       }
 
-      try {
-        const media = await tauriClient.openFilePath(filePath);
-        if (media) {
-          setVideoSrc(media.assetUrl);
-          setTitle(media.cleanTitle);
-          showOsd(`Playing: ${media.cleanTitle}`);
-          const newItem: PlaylistItem = {
-            id: media.rawPath,
-            uri: media.assetUrl,
-            title: media.cleanTitle,
-          };
-          setPlaylist((prev) => {
-            if (prev.some((p) => p.id === media.rawPath)) return prev;
-            return [...prev, newItem];
-          });
-          setPlaylistIndex(playlist.length);
+      const seq = ++openSeqRef.current;
+      // 1) Instant title + URL (synchronous, no IPC round-trip)
+      const instant = tauriClient.openFilePathInstant(filePath);
+      setIsLoading(true);
+      setActiveMediaRawPath(instant.rawPath);
+      setVideoSrc(instant.assetUrl);
+      setTitle(instant.cleanTitle);
+      setCurrentTime(0);
+      setDuration(0);
+      setCues([]);
+      setActiveCueText('');
+      setAudioTracks([{ id: 'default', title: 'Primary Audio (Default)', isDefault: true }]);
+      setSelectedAudioTrack('default');
+      setSubtitleTracks([]);
+      setSelectedSubtitleTrack('off');
+      showOsd(`Opening ${instant.cleanTitle}…`);
+      setPlaylist((prev) => {
+        if (prev.some((p) => p.id === instant.rawPath)) return prev;
+        setPlaylistIndex(prev.length);
+        return [...prev, { id: instant.rawPath, uri: instant.assetUrl, title: instant.cleanTitle }];
+      });
 
-          // Populate audio tracks discovered by Rust container inspection
-          if (media.audioTracks && media.audioTracks.length > 0) {
-            setAudioTracks(media.audioTracks);
-            const activeAudio = media.audioTracks.find((a) => a.isDefault) || media.audioTracks[0];
-            setSelectedAudioTrack(activeAudio.id);
-          } else {
-            setAudioTracks([
-              { id: 'default', title: 'Primary Audio (Default / Stereo / 5.1)', isDefault: true },
-            ]);
-            setSelectedAudioTrack('default');
-          }
+      // 2) Kick the video element right away (persistent element, no remount)
+      const v = videoRef.current;
+      if (v) {
+        v.src = instant.assetUrl;
+        v.load();
+        v.play().catch(() => {});
+      }
 
-          // Populate subtitle tracks (embedded MKV tracks + sidecar .srt files)
-          if (media.subtitleTracks && media.subtitleTracks.length > 0) {
-            setSubtitleTracks(media.subtitleTracks);
-            const activeSub = media.subtitleTracks.find((s) => s.isDefault);
-            if (activeSub) {
-              setSelectedSubtitleTrack(activeSub.id);
-              if (activeSub.filePath) {
-                loadExternalSubtitleFile(activeSub.filePath, activeSub.title);
+      // 3) Heavy container inspection in the background — does not block playback
+      tauriClient.inspectMediaTracks(instant.rawPath).then(({ audioTracks, subtitleTracks }) => {
+        if (openSeqRef.current !== seq) return; // superseded by a newer open
+        if (audioTracks && audioTracks.length > 0) {
+          setAudioTracks(audioTracks);
+          const active = audioTracks.find((a) => a.isDefault) || audioTracks[0];
+          setSelectedAudioTrack(active.id);
+        }
+        if (subtitleTracks && subtitleTracks.length > 0) {
+          setSubtitleTracks(subtitleTracks);
+          const activeSub = subtitleTracks.find((s) => s.isDefault);
+          if (activeSub) {
+            setSelectedSubtitleTrack(activeSub.id);
+            if (activeSub.filePath) {
+              loadExternalSubtitleFile(activeSub.filePath, activeSub.title);
+            } else if (activeSub.id.startsWith('sub-')) {
+              const trackNum = parseInt(activeSub.id.replace('sub-', ''), 10);
+              if (!Number.isNaN(trackNum)) {
+                tauriClient.extractEmbeddedSubtitles(instant.rawPath, trackNum)
+                  .then((extracted) => {
+                    if (openSeqRef.current === seq && extracted && extracted.length > 0) setCues(extracted);
+                  })
+                  .catch(() => {});
               }
-            } else {
-              setSelectedSubtitleTrack('off');
             }
-          } else {
-            setSubtitleTracks([]);
-            setSelectedSubtitleTrack('off');
-          }
-
-          if (videoRef.current) {
-            videoRef.current.src = media.assetUrl;
-            videoRef.current.play().catch(() => {});
           }
         }
-      } catch (err) {
-        console.error('Failed to open media by path:', err);
-      }
+        showOsd(`Playing: ${instant.cleanTitle}`);
+      }).catch((err) => {
+        console.error('Background inspection failed:', err);
+        if (openSeqRef.current === seq) showOsd(`Playing: ${instant.cleanTitle}`);
+      }).finally(() => {
+        if (openSeqRef.current === seq) setIsLoading(false);
+      });
     },
-    [loadExternalSubtitleFile, playlist.length, showOsd]
+    [loadExternalSubtitleFile, showOsd]
   );
 
   // Open Media File with IMMEDIATE AUTOPLAY & Full Stream Track Discovery
@@ -361,11 +379,18 @@ export const PlayerScreen: React.FC = () => {
 
   // Close Active Media
   const handleCloseMedia = () => {
+    setActiveMediaRawPath('');
     setVideoSrc('');
     setTitle('MyPlayer Pro');
     setPlaying(false);
     setCurrentTime(0);
     setDuration(0);
+    setCues([]);
+    setActiveCueText('');
+    setAudioTracks([{ id: 'default', title: 'Primary Audio (Default / Stereo / 5.1)', isDefault: true }]);
+    setSelectedAudioTrack('default');
+    setSubtitleTracks([]);
+    setSelectedSubtitleTrack('off');
     showOsd('Closed Media');
   };
 
@@ -436,9 +461,10 @@ export const PlayerScreen: React.FC = () => {
   const handleSelectAudioTrack = (id: string) => {
     setSelectedAudioTrack(id);
     const v = videoRef.current as any;
-    if (v && v.audioTracks && v.audioTracks.length > 0) {
+    const trackIndex = audioTracks.findIndex((t) => t.id === id);
+    if (v && v.audioTracks && v.audioTracks.length > 0 && trackIndex !== -1) {
       for (let i = 0; i < v.audioTracks.length; i++) {
-        v.audioTracks[i].enabled = (v.audioTracks[i].id === id || `audio-${i}` === id);
+        v.audioTracks[i].enabled = (i === trackIndex);
       }
     }
     const track = audioTracks.find((t) => t.id === id);
@@ -448,6 +474,7 @@ export const PlayerScreen: React.FC = () => {
   const handleSelectSubtitleTrack = async (id: string) => {
     setSelectedSubtitleTrack(id);
     if (id === 'off') {
+      setCues([]);
       setActiveCueText('');
       if (videoRef.current && videoRef.current.textTracks) {
         for (let i = 0; i < videoRef.current.textTracks.length; i++) {
@@ -459,14 +486,36 @@ export const PlayerScreen: React.FC = () => {
     }
 
     const track = subtitleTracks.find((t) => t.id === id);
-    if (track?.filePath) {
+    if (!track) return;
+
+    // 1. If sidecar / external subtitle file
+    if (track.filePath) {
       await loadExternalSubtitleFile(track.filePath, track.title);
-    } else if (videoRef.current && videoRef.current.textTracks) {
-      for (let i = 0; i < videoRef.current.textTracks.length; i++) {
-        videoRef.current.textTracks[i].mode = (id === `embedded-${i}`) ? 'showing' : 'disabled';
-      }
+      showOsd(`Subtitles: ${track.title || id}`);
+      return;
     }
-    showOsd(`Subtitles: ${track?.title || id}`);
+
+    // 2. If embedded MKV subtitle stream
+    if (activeMediaRawPath && track.id.startsWith('sub-')) {
+      const trackNum = parseInt(track.id.replace('sub-', ''), 10);
+      showOsd(`Extracting: ${track.title || track.language}...`);
+      try {
+        const extracted = await tauriClient.extractEmbeddedSubtitles(activeMediaRawPath, trackNum);
+        if (extracted && extracted.length > 0) {
+          setCues(extracted);
+          showOsd(`Subtitles: ${track.title || track.language} (${extracted.length} cues)`);
+        } else {
+          setCues([]);
+          showOsd(`Subtitles: ${track.title || track.language} (No cues)`);
+        }
+      } catch (err) {
+        console.error('Failed to extract embedded subtitles:', err);
+        showOsd('Failed to extract subtitles');
+      }
+      return;
+    }
+
+    showOsd(`Subtitles: ${track.title || id}`);
   };
 
   // Match Subtitle Cue Against Video Clock + Delay Offset
@@ -640,7 +689,7 @@ export const PlayerScreen: React.FC = () => {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className={`relative w-screen h-screen bg-black text-white overflow-hidden flex flex-col select-none ${
+      className={`relative w-screen h-screen bg-[#050507] text-white overflow-hidden flex flex-col select-none ${
         !hudVisible && Boolean(videoSrc) && drawer === 'none' && !settingsOpen && !contextMenu ? 'cursor-none' : ''
       }`}
     >
@@ -665,93 +714,121 @@ export const PlayerScreen: React.FC = () => {
           }}
           className="relative flex-1 flex items-center justify-center bg-black overflow-hidden"
         >
-          {/* Video Element with Autoplay */}
-          {videoSrc ? (
-            videoSrc === 'sample://preview' ? (
-              <img
-                src="/sample_frame.jpg"
-                alt="Sample Video Playback"
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <video
-                ref={videoRef}
-                src={videoSrc}
-                autoPlay
-                loop={loop}
-                onPlay={() => {
-                  setPlaying(true);
-                  bumpHud();
-                }}
-                onPause={() => setPlaying(false)}
-                onLoadedMetadata={(e) => {
-                  setDuration(e.currentTarget.duration);
-                  detectTracks();
-                  e.currentTarget.play().catch(() => {});
-                }}
-                onCanPlay={(e) => {
-                  e.currentTarget.play().catch(() => {});
-                }}
-                className="w-full h-full object-contain"
-              />
-            )
+          {/* Video Element — always mounted so src swaps are instant (no remount freeze).
+              Sample-preview mode is a dev-only mock. */}
+          {videoSrc === 'sample://preview' ? (
+            <img
+              src="/sample_frame.jpg"
+              alt="Sample Video Playback"
+              className="w-full h-full object-cover"
+            />
           ) : (
-            /* Minimalist Sharp Empty State (Right-Angled, Clean, No Bloat) */
-            <div className="relative z-10 flex flex-col items-center justify-center text-center p-6 max-w-sm animate-in fade-in duration-200">
-              <div
-                className="w-12 h-12 bg-white/[0.05] border border-white/10 flex items-center justify-center mb-4 group cursor-pointer hover:border-amber-400 transition"
-                onClick={handleOpenFile}
-              >
-                <Play size={18} className="fill-amber-400 text-amber-400 ml-0.5" />
-              </div>
-
-              <h2 className="text-xs font-semibold tracking-wider uppercase text-zinc-200 mb-1">
-                No Media Loaded
-              </h2>
-              <p className="text-[11px] text-zinc-500 mb-5 leading-normal">
-                Drop any video file here or select one from disk
-              </p>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleOpenFile}
-                  className="px-3.5 py-1.5 bg-white text-zinc-950 font-medium text-xs flex items-center gap-1.5 hover:bg-zinc-200 transition"
-                >
-                  <FolderOpen size={13} className="text-zinc-950" />
-                  <span>Open Video</span>
-                </button>
-
-                <button
-                  onClick={() => setDrawer('playlist')}
-                  className="px-3 py-1.5 bg-white/[0.06] hover:bg-white/[0.12] text-zinc-300 text-xs font-medium flex items-center gap-1.5 transition border border-white/[0.08]"
-                >
-                  <ListMusic size={13} />
-                  <span>Queue</span>
-                </button>
-              </div>
-
-              <div className="mt-6 pt-3 border-t border-white/[0.06] flex items-center gap-2 text-[10px] text-zinc-500 font-mono">
-                <span>Space: Play</span>
-                <span>•</span>
-                <span>←/→: Seek</span>
-                <span>•</span>
-                <span>Right-Click: Menu</span>
+            <video
+              ref={videoRef}
+              src={videoSrc || undefined}
+              autoPlay
+              loop={loop}
+              preload="auto"
+              onPlay={() => {
+                setPlaying(true);
+                setIsLoading(false);
+                bumpHud();
+              }}
+              onPause={() => setPlaying(false)}
+              onWaiting={() => setIsLoading(true)}
+              onPlaying={() => setIsLoading(false)}
+              onLoadedMetadata={(e) => {
+                setDuration(e.currentTarget.duration);
+                detectTracks();
+                e.currentTarget.play().catch(() => {});
+              }}
+              onCanPlay={() => {}}
+              className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
+                videoSrc ? 'opacity-100' : 'opacity-0 pointer-events-none'
+              }`}
+            />
+          )}
+          {/* Loading shimmer while opening */}
+          {isLoading && videoSrc && videoSrc !== 'sample://preview' && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
+              <div className="flex flex-col items-center gap-3 animate-fade-in">
+                <svg className="animate-spin" width="26" height="26" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.12)" strokeWidth="3" />
+                  <path d="M12 2a10 10 0 0 1 10 10" stroke="url(#spinGrad)" strokeWidth="3" strokeLinecap="round" />
+                  <defs>
+                    <linearGradient id="spinGrad" x1="0" y1="0" x2="24" y2="24">
+                      <stop offset="0%" stopColor="#818cf8" />
+                      <stop offset="100%" stopColor="#22d3ee" />
+                    </linearGradient>
+                  </defs>
+                </svg>
+                <span className="text-[12px] text-zinc-400 font-display">Loading…</span>
               </div>
             </div>
           )}
+          {!videoSrc ? (
+            <div className="aurora absolute inset-0 z-10 flex flex-col items-center justify-center text-center p-6">
+              <div className="max-w-md w-full animate-fade-in flex flex-col items-center">
+                <div className="animate-rise-in flex flex-col items-center" style={{ animationDelay: '0ms' }}>
+                  <button
+                    onClick={handleOpenFile}
+                    className="w-24 h-24 rounded-full accent-gradient-soft text-white flex items-center justify-center mb-7 hover:scale-105 active:scale-95 transition-all duration-200 shadow-[0_16px_56px_rgba(99,102,241,0.5)] animate-ring animate-float"
+                    title="Open video"
+                  >
+                    <Play size={34} className="fill-white ml-1.5" />
+                  </button>
+                </div>
 
-          {/* Drag Overlay Hint */}
+                <h1 className="animate-rise-in font-display text-[34px] leading-[1.05] font-bold tracking-tight mb-3" style={{ animationDelay: '60ms' }}>
+                  <span className="text-gradient">Watch anything.</span>
+                  <br />
+                  <span className="text-white">Beautifully fast.</span>
+                </h1>
+                <p className="animate-rise-in text-[13.5px] text-zinc-400 mb-8 leading-relaxed max-w-xs" style={{ animationDelay: '120ms' }}>
+                  Drop a video anywhere, or browse your device. Plays instantly — audio & subtitle tracks load in the background.
+                </p>
+
+                <div className="animate-rise-in flex items-center gap-2.5" style={{ animationDelay: '180ms' }}>
+                  <button
+                    onClick={handleOpenFile}
+                    className="px-6 py-3 rounded-full accent-gradient-soft text-white font-semibold text-[13.5px] flex items-center gap-2 hover:brightness-110 hover:scale-[1.03] active:scale-95 transition-all shadow-[0_10px_36px_rgba(99,102,241,0.45)]"
+                  >
+                    <FolderOpen size={15} />
+                    <span>Browse files</span>
+                  </button>
+                  <button
+                    onClick={() => setDrawer('playlist')}
+                    className="px-6 py-3 rounded-full glass text-zinc-100 text-[13.5px] font-medium flex items-center gap-2 hover:bg-white/[0.12] hover:scale-[1.03] active:scale-95 transition-all"
+                  >
+                    <ListMusic size={15} />
+                    <span>Queue</span>
+                  </button>
+                </div>
+
+                <div className="animate-rise-in mt-10 flex items-center gap-4 text-[11px] text-zinc-500 font-mono" style={{ animationDelay: '240ms' }}>
+                  <span className="px-2 py-1 rounded-md bg-white/[0.06] border border-white/[0.08]">Space — Play</span>
+                  <span className="px-2 py-1 rounded-md bg-white/[0.06] border border-white/[0.08]">← → — Seek</span>
+                  <span className="px-2 py-1 rounded-md bg-white/[0.06] border border-white/[0.08]">Right-click — Menu</span>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Drag Overlay */}
           {isDraggingFile && (
-            <div className="absolute inset-2 border border-dashed border-amber-400/80 bg-black/80 flex flex-col items-center justify-center gap-2 z-50 pointer-events-none animate-in fade-in">
-              <Film size={28} className="text-amber-400" />
-              <div className="text-xs font-medium text-amber-400 uppercase tracking-wider">Drop video to play</div>
+            <div className="absolute inset-4 rounded-[28px] border-2 border-dashed border-indigo-400/60 bg-indigo-500/[0.08] backdrop-blur-sm flex flex-col items-center justify-center gap-4 z-50 pointer-events-none animate-fade-in">
+              <div className="w-16 h-16 rounded-full accent-gradient-soft text-white flex items-center justify-center shadow-[0_12px_44px_rgba(99,102,241,0.5)]">
+                <Film size={26} />
+              </div>
+              <div className="font-display text-[16px] font-semibold text-white">Drop to play</div>
+              <div className="text-[12px] text-zinc-400">Video starts instantly</div>
             </div>
           )}
 
           {/* OSD Toast Notification */}
           <OsdOverlay message={osdMessage} />
 
-          {/* Framed Subtitle Display */}
+          {/* Subtitle Display */}
           {(activeCueText || drawer === 'subtitles') && (
             <div
               style={{
@@ -760,9 +837,9 @@ export const PlayerScreen: React.FC = () => {
                 fontSize: `${subConfig.font_size}px`,
                 backgroundColor: `rgba(0, 0, 0, ${subConfig.background_opacity})`,
               }}
-              className="absolute px-4 py-1.5 text-center whitespace-pre-line pointer-events-none border border-white/10 shadow-2xl transition-all duration-75 text-zinc-100 font-medium tracking-wide max-w-2xl"
+              className={`absolute left-1/2 -translate-x-1/2 px-4 py-1.5 text-center whitespace-pre-line pointer-events-none rounded-lg transition-all duration-75 text-white font-medium tracking-tight max-w-2xl ${drawer === 'subtitles' ? '' : ''}`}
             >
-              {activeCueText || 'Subtitle Framing Preview — Drag slider to adjust'}
+              {activeCueText || 'Preview — adjust position in panel'}
             </div>
           )}
 

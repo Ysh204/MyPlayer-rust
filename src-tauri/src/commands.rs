@@ -6,7 +6,7 @@ use crate::core::title_cleaner::clean_media_title;
 use crate::data::models::eq_state::{EqPreset, EqState};
 use crate::data::models::subtitle_style::SubtitleConfig;
 use crate::services::audio_filter_builder::build_audio_filter;
-use crate::services::media_inspector::{inspect_media_file, MediaTrack};
+use crate::services::media_inspector::{extract_embedded_subtitles, inspect_media_file, MediaTrack, SubtitleCueItem};
 use crate::services::player_service::PlayerService;
 
 pub struct AppState {
@@ -38,6 +38,9 @@ pub struct MediaOpenResponse {
     pub subtitle_tracks: Vec<MediaTrack>,
 }
 
+/// Legacy synchronous open: inspects before returning (kept for compatibility).
+/// The frontend no longer awaits this on the critical path — it uses `open_media_file_fast`
+/// for instant playback and `inspect_media_tracks` in the background.
 #[tauri::command]
 pub fn open_media_file(state: State<'_, Mutex<AppState>>, path: String) -> MediaOpenResponse {
     let mut app = state.lock().unwrap();
@@ -51,9 +54,43 @@ pub fn open_media_file(state: State<'_, Mutex<AppState>>, path: String) -> Media
     }
 }
 
+/// Fast path: register the file and return immediately so the video starts at once.
+/// Thread inspection is done via `inspect_media_tracks` after playback begins.
+#[tauri::command]
+pub fn open_media_file_fast(state: State<'_, Mutex<AppState>>, path: String) -> MediaOpenResponse {
+    {
+        let mut app = state.lock().unwrap();
+        app.player.open_file(&path);
+    }
+    MediaOpenResponse {
+        clean_title: clean_media_title(&path),
+        raw_path: path,
+        audio_tracks: Vec::new(),
+        subtitle_tracks: Vec::new(),
+    }
+}
+
+/// Background inspection: parses container headers + sidecars (can be slow) — call
+/// *after* the video element has already started playing.
+#[tauri::command]
+pub fn inspect_media_tracks(path: String) -> MediaOpenResponse {
+    let inspected = inspect_media_file(&path);
+    MediaOpenResponse {
+        clean_title: clean_media_title(&path),
+        raw_path: path,
+        audio_tracks: inspected.audio_tracks,
+        subtitle_tracks: inspected.subtitle_tracks,
+    }
+}
+
 #[tauri::command]
 pub fn load_subtitle_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn extract_subtitles_for_track(path: String, track_num: u64) -> Vec<SubtitleCueItem> {
+    extract_embedded_subtitles(&path, track_num)
 }
 
 #[tauri::command]
@@ -88,4 +125,3 @@ pub fn update_playback_settings(
     app.auto_resume = auto_resume;
     app.player.set_hardware_decoding(hardware_decoding);
 }
-
