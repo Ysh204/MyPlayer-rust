@@ -506,10 +506,7 @@ export function PlayerScreen() {
             className="viewport"
             onDoubleClick={(event) => { if (!(event.target as Element).closest('button')) void changeFullscreen(!fullscreen); }}
             onClick={(event) => {
-              if (media && !error && event.detail === 1 && !(event.target as Element).closest('button')) {
-                if (drawer !== 'none') dismissDrawer();
-                else togglePlay();
-              }
+              if (drawer !== 'none' && !(event.target as Element).closest('button')) dismissDrawer();
             }}
             onContextMenu={(event) => {
               event.preventDefault();
@@ -566,7 +563,7 @@ export function PlayerScreen() {
               <div className="empty-state">
                 {error && <h1>Unable to play this file</h1>}
                 <div className="error-actions">
-                  <button className="secondary-button" type="button" onClick={() => void openFile()}>
+                  <button className="primary-button" type="button" onClick={() => void openFile()}>
                     <FolderOpen size={14} />{error ? 'Open another file' : 'Open video'}
                   </button>
                   {error && <button className="secondary-button" type="button" onClick={() => selectMedia(null)}>Close media</button>}
