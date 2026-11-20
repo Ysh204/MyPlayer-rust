@@ -8,59 +8,70 @@ on:
 
 jobs:
   release:
+    runs-on: windows-latest
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: 'windows-latest'
-            args: '--ignore-version-mismatches'
-
-    runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Bun
+      - name: Set up Bun
         uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
 
-      - name: Setup Rust
+      - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Rust cache
+      - name: Cache Rust builds
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
-      - name: Build Desktop Bundles & Publish GitHub Release
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Prepare native audio decoder
+        run: .\scripts\prepare_native_audio.ps1
+
+      - name: Build Windows packages
+        id: build
+        run: |
+          $config = Get-Content -LiteralPath 'src-tauri/tauri.conf.json' -Raw | ConvertFrom-Json
+          $version = $config.version
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            if ($env:GITHUB_REF_NAME -notmatch '^v(\d+\.\d+\.\d+)$') {
+              throw 'Release tags must use the form v1.2.3.'
+            }
+            $version = $Matches[1]
+          }
+          $override = Join-Path $env:RUNNER_TEMP 'myplayer-release.json'
+          @{ version = $version } | ConvertTo-Json -Compress | Set-Content -LiteralPath $override -Encoding utf8
+          bun run tauri build --ci --bundles nsis msi --config $override
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\scripts\package_releases.ps1 -Version $version
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Upload manual build
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
         with:
-          tagName: v__VERSION__
-          releaseName: 'MyPlayer Pro v__VERSION__'
-          releaseBody: |
-            ### MyPlayer Pro Desktop Release
-            
-            Download the installer or portable executable below for Windows:
-            - **Setup Installer (Recommended)**: `MyPlayer-Pro_*_x64-setup.exe`
-            - **MSI Enterprise Package**: `MyPlayer-Pro_*_x64_en-US.msi`
-            
-            #### Highlights:
-            - Minimal obsidian glass aesthetic & frameless window
-            - Instant direct autoplay & 60fps timeline tracking
-            - 5-band parametric audio equalizer & Night Mode peak compressor
-            - Precision subtitle vertical letterbox framing (10% - 105%)
-            - Reorderable playlist queue
-          releaseDraft: false
-          prerelease: false
-          args: ${{ matrix.args }}
+          name: MyPlayer-Pro-Windows-x64
+          path: releases/windows-x64/
+          if-no-files-found: error
 
+      - name: Publish GitHub release
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ steps.build.outputs.version }}
+        run: |
+          $stem = "releases/windows-x64/MyPlayer-Pro_${env:RELEASE_VERSION}_x64"
+          $assets = @("$stem-setup.exe", "${stem}_en-US.msi", "${stem}_portable.zip")
+          gh release view $env:GITHUB_REF_NAME --json tagName *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:GITHUB_REF_NAME @assets --clobber
+          } else {
+            gh release create $env:GITHUB_REF_NAME @assets --verify-tag --title "MyPlayer Pro $env:GITHUB_REF_NAME" --generate-notes
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

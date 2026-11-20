@@ -14,7 +14,8 @@ Release archive SHA-256:
 The mpv source and licensing details are at
 https://github.com/mpv-player/mpv/tree/v0.42.0 and
 https://github.com/mpv-player/mpv/blob/v0.42.0/Copyright.
-The DLL remains a separate file in the installed application's `bin` folder.
-Run `scripts/prepare_native_audio.ps1` before building a fresh checkout to
-download and verify the library. The binary is excluded from Git because it
-exceeds typical repository file size limits.
+The installers and portable ZIP include the separate DLL and `LICENSE.LGPL` in
+the application's `bin` folder. From the repository root, run
+`.\scripts\prepare_native_audio.ps1` before building a fresh checkout. The script
+verifies both the archive and the extracted DLL. Git tracks this README and
+`LICENSE.LGPL` and ignores the downloaded DLL.

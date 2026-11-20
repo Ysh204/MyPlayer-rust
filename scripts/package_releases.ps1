@@ -1,28 +1,66 @@
-$releaseDir = "d:\projects\my_player_rust\releases"
-if (!(Test-Path $releaseDir)) {
-    New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+param(
+    [ValidatePattern('^\d+\.\d+\.\d+$')]
+    [string]$Version
+)
+
+$ErrorActionPreference = 'Stop'
+$root = Split-Path -Parent $PSScriptRoot
+if (!$Version) {
+    $config = Get-Content -LiteralPath (Join-Path $root 'src-tauri/tauri.conf.json') -Raw | ConvertFrom-Json
+    $Version = $config.version
 }
 
-$nsisSource = "d:\projects\my_player_rust\src-tauri\target\release\bundle\nsis\MyPlayer Pro_1.0.0_x64-setup.exe"
-$msiSource = "d:\projects\my_player_rust\src-tauri\target\release\bundle\msi\MyPlayer Pro_1.0.0_x64_en-US.msi"
-$exeSource = "d:\projects\my_player_rust\src-tauri\target\release\myplayer_pro_rust.exe"
+$buildDir = Join-Path $root 'src-tauri/target/release'
+$releaseDir = Join-Path $root 'releases/windows-x64'
+$executable = Get-Item -LiteralPath (Join-Path $buildDir 'myplayer_pro_rust.exe')
+if ($executable.VersionInfo.ProductVersion -ne $Version) {
+    throw "The executable is version $($executable.VersionInfo.ProductVersion). Build version $Version before packaging."
+}
 
-Copy-Item $nsisSource "$releaseDir\MyPlayer-Pro_1.0.0_x64-setup.exe" -Force
-Copy-Item $msiSource "$releaseDir\MyPlayer-Pro_1.0.0_x64_en-US.msi" -Force
+$installerStem = "MyPlayer Pro_${Version}_x64"
+$outputStem = "MyPlayer-Pro_${Version}_x64"
+$installers = @(
+    @{ Source = "bundle/nsis/$installerStem-setup.exe"; Name = "$outputStem-setup.exe" }
+    @{ Source = "bundle/msi/${installerStem}_en-US.msi"; Name = "${outputStem}_en-US.msi" }
+) | Where-Object { Test-Path -LiteralPath (Join-Path $buildDir $_.Source) -PathType Leaf }
+if (!$installers) {
+    throw "Build the NSIS or MSI installer for version $Version before packaging."
+}
 
-# Create portable standalone zip
-$portableFolder = "$env:TEMP\myplayer_portable"
-if (Test-Path $portableFolder) { Remove-Item -Recurse -Force $portableFolder }
-New-Item -ItemType Directory -Path $portableFolder | Out-Null
-Copy-Item $exeSource "$portableFolder\MyPlayer-Pro.exe" -Force
-New-Item -ItemType Directory -Path "$portableFolder\bin" -Force | Out-Null
-Copy-Item "d:\projects\my_player_rust\src-tauri\bin\libmpv-2.dll" "$portableFolder\bin\libmpv-2.dll" -Force
-Copy-Item "d:\projects\my_player_rust\src-tauri\bin\README.md" "$portableFolder\bin\README.md" -Force
+$portableFiles = [ordered]@{
+    'MyPlayer-Pro.exe' = $executable.FullName
+    'bin/libmpv-2.dll' = Join-Path $buildDir 'bin/libmpv-2.dll'
+    'bin/README.md' = Join-Path $buildDir 'bin/README.md'
+    'bin/LICENSE.LGPL' = Join-Path $buildDir 'bin/LICENSE.LGPL'
+}
+foreach ($source in $portableFiles.Values) {
+    if (!(Test-Path -LiteralPath $source -PathType Leaf)) {
+        throw "Missing build resource $source. Prepare the decoder and rebuild the app before packaging."
+    }
+}
 
-$zipPath = "$releaseDir\MyPlayer-Pro_1.0.0_x64_portable.zip"
-if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
-Compress-Archive -Path "$portableFolder\*" -DestinationPath $zipPath -Force
-Remove-Item -Recurse -Force $portableFolder
+New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zipPath = Join-Path $releaseDir "${outputStem}_portable.zip"
+$tempZip = "$zipPath.$([guid]::NewGuid()).tmp"
+try {
+    $archive = [System.IO.Compression.ZipFile]::Open($tempZip, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($entry in $portableFiles.GetEnumerator()) {
+            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $entry.Value, $entry.Key) | Out-Null
+        }
+    } finally {
+        $archive.Dispose()
+    }
+    Move-Item -LiteralPath $tempZip -Destination $zipPath -Force
+} finally {
+    if (Test-Path -LiteralPath $tempZip) {
+        Remove-Item -LiteralPath $tempZip
+    }
+}
 
-Get-ChildItem $releaseDir | Select-Object Name, Length, LastWriteTime
-
+foreach ($installer in $installers) {
+    Copy-Item -LiteralPath (Join-Path $buildDir $installer.Source) -Destination (Join-Path $releaseDir $installer.Name) -Force
+}
+Write-Host "Packaged version $Version in $releaseDir"
