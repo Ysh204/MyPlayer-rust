@@ -1,447 +1,143 @@
-import React, { useEffect, useRef, useState } from 'react';
-import type { DrawerPanel, TrackInfo } from '../../core/types';
+import { useLayoutEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import {
-  FolderOpen,
-  Play,
-  Pause,
-  RotateCcw,
-  RotateCw,
-  Sliders,
-  Subtitles,
-  ListMusic,
-  Maximize,
-  Minimize,
-  SlidersHorizontal,
-  Volume2,
-  VolumeX,
-  Gauge,
-  Repeat,
-  Camera,
-  X,
-  ChevronRight,
-  Check,
+  ArrowLeft, Camera, Captions, Check, ChevronRight, FolderOpen, Gauge, ListMusic, Maximize,
+  Minimize, Pause, Play, Repeat, Settings2, SlidersHorizontal, Volume2, X,
 } from 'lucide-react';
+import type { DrawerPanel, TrackInfo } from '../../core/types';
 
-interface PlayerContextMenuProps {
-  x: number;
-  y: number;
-  onClose: () => void;
-  playing: boolean;
-  onTogglePlay: () => void;
-  onSeekDelta: (seconds: number) => void;
-  onOpenFile: () => void;
-  onOpenDrawer: (panel: DrawerPanel) => void;
-  onOpenSettings: () => void;
-  onToggleFullscreen: () => void;
-  isFullScreen: boolean;
-  speed: number;
-  onSetSpeed: (speed: number) => void;
-  loop: boolean;
-  onToggleLoop: () => void;
-  onTakeScreenshot: () => void;
-  onCloseMedia: () => void;
-  volume: number;
-  onToggleMute: () => void;
+export interface MenuAnchor { x: number; y: number; above?: boolean; trigger?: HTMLElement }
+
+interface Props {
+  anchor: MenuAnchor;
+  onClose: (restoreFocus?: boolean) => void;
   hasMedia: boolean;
-  audioTracks?: TrackInfo[];
-  selectedAudioTrack?: string;
-  onSelectAudioTrack?: (id: string) => void;
-  subtitleTracks?: TrackInfo[];
-  selectedSubtitleTrack?: string;
-  onSelectSubtitleTrack?: (id: string) => void;
+  canSnapshot: boolean;
+  playing: boolean;
+  fullscreen: boolean;
+  speed: number;
+  loop: boolean;
+  audioTracks: TrackInfo[];
+  selectedAudio: string;
+  onSelectAudio: (id: string) => void;
+  subtitleTracks: TrackInfo[];
+  selectedSubtitle: string;
+  onSelectSubtitle: (id: string) => void;
+  onPlay: () => void;
+  onOpen: () => void;
+  onDrawer: (panel: DrawerPanel) => void;
+  onSettings: () => void;
+  onFullscreen: () => void;
+  onSpeed: (speed: number) => void;
+  onLoop: () => void;
+  onSnapshot: () => void;
+  onCloseMedia: () => void;
 }
 
-export const PlayerContextMenu: React.FC<PlayerContextMenuProps> = ({
-  x,
-  y,
-  onClose,
-  playing,
-  onTogglePlay,
-  onSeekDelta,
-  onOpenFile,
-  onOpenDrawer,
-  onOpenSettings,
-  onToggleFullscreen,
-  isFullScreen,
-  speed,
-  onSetSpeed,
-  loop,
-  onToggleLoop,
-  onTakeScreenshot,
-  onCloseMedia,
-  volume,
-  onToggleMute,
-  hasMedia,
-  audioTracks = [],
-  selectedAudioTrack = 'default',
-  onSelectAudioTrack,
-  subtitleTracks = [],
-  selectedSubtitleTrack = 'off',
-  onSelectSubtitleTrack,
-}) => {
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  const [activeSubmenu, setActiveSubmenu] = useState<string | null>(null);
-  const [adjustedPos, setAdjustedPos] = useState<{ x: number; y: number }>({ x, y });
+function MenuItem({ icon, children, hint, end, disabled, onClick }: {
+  icon?: ReactNode; children: ReactNode; hint?: string; end?: ReactNode; disabled?: boolean; onClick: () => void;
+}) {
+  return (
+    <button type="button" className="menu-item" disabled={disabled} onClick={onClick}>
+      {icon && <span className="menu-icon">{icon}</span>}
+      <span className="menu-label">{children}</span>
+      {hint && <span className="menu-hint">{hint}</span>}
+      {end}
+    </button>
+  );
+}
 
-  // Clamp context menu inside the viewport so it never clips off-screen
-  useEffect(() => {
-    if (menuRef.current) {
-      const rect = menuRef.current.getBoundingClientRect();
-      const maxX = window.innerWidth - rect.width - 8;
-      const maxY = window.innerHeight - rect.height - 8;
-      setAdjustedPos({
-        x: Math.max(8, Math.min(x, maxX)),
-        y: Math.max(8, Math.min(y, maxY)),
-      });
-    }
-  }, [x, y]);
+export function PlayerContextMenu(props: Props) {
+  const { anchor, onClose } = props;
+  const [page, setPage] = useState<'main' | 'speed' | 'audio' | 'subtitles'>('main');
+  const menu = useRef<HTMLDivElement>(null);
 
-  // Close when clicking outside or pressing Escape
-  useEffect(() => {
-    const handleDown = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        onClose();
-      }
+  useLayoutEffect(() => {
+    const element = menu.current;
+    if (!element) return;
+    const place = () => {
+      const { offsetWidth: width, offsetHeight: height } = element;
+      const left = anchor.above ? anchor.x - width : anchor.x;
+      const top = anchor.above ? anchor.y - height : anchor.y;
+      element.style.left = `${Math.max(8, Math.min(left, window.innerWidth - width - 8))}px`;
+      element.style.top = `${Math.max(8, Math.min(top, window.innerHeight - height - 8))}px`;
     };
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-
-    window.addEventListener('mousedown', handleDown);
-    window.addEventListener('keydown', handleKey);
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(element);
+    window.addEventListener('resize', place);
+    element.scrollTop = 0;
+    element.querySelector('button')?.focus({ preventScroll: true });
     return () => {
-      window.removeEventListener('mousedown', handleDown);
-      window.removeEventListener('keydown', handleKey);
+      observer.disconnect();
+      window.removeEventListener('resize', place);
     };
-  }, [onClose]);
+  }, [anchor, page]);
 
-  const speedOptions = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+  useLayoutEffect(() => {
+    const outside = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!menu.current?.contains(target) && !anchor.trigger?.contains(target)) onClose();
+    };
+    window.addEventListener('pointerdown', outside);
+    return () => window.removeEventListener('pointerdown', outside);
+  }, [anchor, onClose]);
+
+  const run = (action: () => void) => {
+    onClose(true);
+    action();
+  };
+  const tracks = page === 'audio' ? props.audioTracks : props.subtitleTracks;
+  const selected = page === 'audio' ? props.selectedAudio : props.selectedSubtitle;
+  const select = page === 'audio' ? props.onSelectAudio : props.onSelectSubtitle;
 
   return (
-    <div
-      ref={menuRef}
-      style={{ left: adjustedPos.x, top: adjustedPos.y }}
-      className="fixed z-50 w-56 bg-[#0D0E15]/95 backdrop-blur-xl border border-white/[0.1] shadow-[0_16px_40px_rgba(0,0,0,0.85)] py-1 text-zinc-200 select-none text-[11.5px] font-sans"
-      onContextMenu={(e) => e.preventDefault()}
-    >
-      {/* File Menu Section */}
-      <button
-        onClick={() => {
-          onOpenFile();
-          onClose();
-        }}
-        className="w-full h-7 px-3 flex items-center justify-between hover:bg-white/[0.08] text-zinc-300 hover:text-white transition"
-      >
-        <div className="flex items-center gap-2.5">
-          <FolderOpen size={13} className="text-amber-400" />
-          <span>Open Media File…</span>
-        </div>
-        <span className="text-[10px] text-zinc-500 font-mono">Ctrl+O</span>
-      </button>
-
-      {hasMedia && (
-        <button
-          onClick={() => {
-            onCloseMedia();
-            onClose();
-          }}
-          className="w-full h-7 px-3 flex items-center gap-2.5 hover:bg-white/[0.08] text-zinc-300 hover:text-white transition"
-        >
-          <X size={13} className="text-zinc-400" />
-          <span>Close Media</span>
-        </button>
+    <div className="player-menu" ref={menu} role="group" aria-label="Playback actions"
+      onContextMenu={(event) => event.preventDefault()}
+      onKeyDown={(event) => {
+        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+        event.preventDefault();
+        const buttons = Array.from(menu.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []);
+        const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        buttons[(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus();
+      }}>
+      {page === 'main' ? (
+        <>
+          <MenuItem icon={<FolderOpen size={15} />} hint="Ctrl+O" onClick={() => run(props.onOpen)}>Open file…</MenuItem>
+          <MenuItem icon={props.playing ? <Pause size={15} /> : <Play size={15} />} hint="Space" disabled={!props.hasMedia} onClick={() => run(props.onPlay)}>
+            {props.playing ? 'Pause' : 'Play'}
+          </MenuItem>
+          <MenuItem icon={<Gauge size={15} />} hint={`${props.speed}×`} end={<ChevronRight size={14} />} onClick={() => setPage('speed')}>Playback speed</MenuItem>
+          <MenuItem icon={<Repeat size={15} />} end={props.loop && <Check size={15} />} onClick={() => run(props.onLoop)}>Loop video</MenuItem>
+          <hr />
+          {props.audioTracks.length > 1 && <MenuItem icon={<Volume2 size={15} />} end={<ChevronRight size={14} />} onClick={() => setPage('audio')}>Audio track</MenuItem>}
+          {props.subtitleTracks.length > 1 && <MenuItem icon={<Captions size={15} />} end={<ChevronRight size={14} />} onClick={() => setPage('subtitles')}>Subtitle track</MenuItem>}
+          <MenuItem icon={<SlidersHorizontal size={15} />} onClick={() => run(() => props.onDrawer('audio'))}>Audio and equalizer</MenuItem>
+          <MenuItem icon={<Captions size={15} />} onClick={() => run(() => props.onDrawer('subtitles'))}>Subtitles</MenuItem>
+          <MenuItem icon={<ListMusic size={15} />} onClick={() => run(() => props.onDrawer('playlist'))}>Queue</MenuItem>
+          <MenuItem icon={<Settings2 size={15} />} onClick={() => run(props.onSettings)}>Playback settings</MenuItem>
+          <hr />
+          <MenuItem icon={<Camera size={15} />} disabled={!props.canSnapshot} onClick={() => run(props.onSnapshot)}>Save frame…</MenuItem>
+          <MenuItem icon={props.fullscreen ? <Minimize size={15} /> : <Maximize size={15} />} hint="F" onClick={() => run(props.onFullscreen)}>
+            {props.fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+          </MenuItem>
+          {props.hasMedia && <MenuItem icon={<X size={15} />} onClick={() => run(props.onCloseMedia)}>Close media</MenuItem>}
+        </>
+      ) : (
+        <>
+          <MenuItem icon={<ArrowLeft size={15} />} onClick={() => setPage('main')}>Playback actions</MenuItem>
+          <hr />
+          {page === 'speed' ? [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((speed) => (
+            <MenuItem key={speed} end={speed === props.speed && <Check size={15} />} onClick={() => run(() => props.onSpeed(speed))}>
+              {speed}×{speed === 1 ? ' (normal)' : ''}
+            </MenuItem>
+          )) : tracks.map((track) => (
+            <MenuItem key={track.id} end={track.id === selected && <Check size={15} />} onClick={() => run(() => select(track.id))}>
+              {track.title || track.language || track.id}
+            </MenuItem>
+          ))}
+        </>
       )}
-
-      <div className="w-full h-px bg-white/[0.08] my-1" />
-
-      {/* Playback Controls */}
-      <button
-        onClick={() => {
-          onTogglePlay();
-          onClose();
-        }}
-        disabled={!hasMedia}
-        className="w-full h-7 px-3 flex items-center justify-between hover:bg-white/[0.08] text-zinc-300 hover:text-white transition disabled:opacity-30"
-      >
-        <div className="flex items-center gap-2.5">
-          {playing ? <Pause size={13} className="text-amber-400" /> : <Play size={13} className="text-amber-400" />}
-          <span>{playing ? 'Pause' : 'Play'}</span>
-        </div>
-        <span className="text-[10px] text-zinc-500 font-mono">Space</span>
-      </button>
-
-      <button
-        onClick={() => {
-          onSeekDelta(-5);
-          onClose();
-        }}
-        disabled={!hasMedia}
-        className="w-full h-7 px-3 flex items-center justify-between hover:bg-white/[0.08] text-zinc-300 hover:text-white transition disabled:opacity-30"
-      >
-        <div className="flex items-center gap-2.5">
-          <RotateCcw size={13} className="text-zinc-400" />
-          <span>Seek Backward 5s</span>
-        </div>
-        <span className="text-[10px] text-zinc-500 font-mono">←</span>
-      </button>
-
-      <button
-        onClick={() => {
-          onSeekDelta(5);
-          onClose();
-        }}
-        disabled={!hasMedia}
-        className="w-full h-7 px-3 flex items-center justify-between hover:bg-white/[0.08] text-zinc-300 hover:text-white transition disabled:opacity-30"
-      >
-        <div className="flex items-center gap-2.5">
-          <RotateCw size={13} className="text-zinc-400" />
-          <span>Seek Forward 5s</span>
-        </div>
-        <span className="text-[10px] text-zinc-500 font-mono">→</span>
-      </button>
-
-      {/* Playback Speed Submenu */}
-      <div
-        className="relative"
-        onMouseEnter={() => setActiveSubmenu('speed')}
-        onMouseLeave={() => setActiveSubmenu(null)}
-      >
-        <div className="w-full h-7 px-3 flex items-center justify-between hover:bg-white/[0.08] text-zinc-300 hover:text-white cursor-pointer transition">
-          <div className="flex items-center gap-2.5">
-            <Gauge size={13} className="text-zinc-400" />
-            <span>Playback Speed ({speed}x)</span>
-          </div>
-          <ChevronRight size={12} className="text-zinc-500" />
-        </div>
-
-        {activeSubmenu === 'speed' && (
-          <div className="absolute left-full top-0 w-32 bg-[#0D0E15]/95 backdrop-blur-xl border border-white/[0.1] shadow-2xl py-1 text-zinc-200">
-            {speedOptions.map((rate) => (
-              <button
-                key={rate}
-                onClick={() => {
-                  onSetSpeed(rate);
-                  onClose();
-                }}
-                className={`w-full h-6 px-3 flex items-center justify-between hover:bg-white/[0.08] text-[11px] transition ${
-                  speed === rate ? 'text-amber-400 font-semibold' : 'text-zinc-300'
-                }`}
-              >
-                <span>{rate}x{rate === 1.0 ? ' (Normal)' : ''}</span>
-                {speed === rate && <Check size={11} />}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Loop Toggle */}
-      <button
-        onClick={() => {
-          onToggleLoop();
-          onClose();
-        }}
-        className="w-full h-7 px-3 flex items-center justify-between hover:bg-white/[0.08] text-zinc-300 hover:text-white transition"
-      >
-        <div className="flex items-center gap-2.5">
-          <Repeat size={13} className={loop ? 'text-amber-400' : 'text-zinc-400'} />
-          <span>Loop Video</span>
-        </div>
-        <span className="text-[10px] text-amber-400 font-mono">{loop ? 'ON' : 'OFF'}</span>
-      </button>
-
-      <div className="w-full h-px bg-white/[0.08] my-1" />
-
-      {/* Audio & Equalizer */}
-      <button
-        onClick={() => {
-          onToggleMute();
-          onClose();
-        }}
-        className="w-full h-7 px-3 flex items-center justify-between hover:bg-white/[0.08] text-zinc-300 hover:text-white transition"
-      >
-        <div className="flex items-center gap-2.5">
-          {volume === 0 ? <VolumeX size={13} className="text-zinc-400" /> : <Volume2 size={13} className="text-zinc-400" />}
-          <span>{volume === 0 ? 'Unmute Audio' : 'Mute Audio'}</span>
-        </div>
-        <span className="text-[10px] text-zinc-500 font-mono">M</span>
-      </button>
-
-      <button
-        onClick={() => {
-          onOpenDrawer('audio');
-          onClose();
-        }}
-        className="w-full h-7 px-3 flex items-center gap-2.5 hover:bg-white/[0.08] text-zinc-300 hover:text-white transition"
-      >
-        <Sliders size={13} className="text-amber-400" />
-        <span>Audio Equalizer & DSP…</span>
-      </button>
-
-      {/* Subtitles */}
-      <button
-        onClick={() => {
-          onOpenDrawer('subtitles');
-          onClose();
-        }}
-        className="w-full h-7 px-3 flex items-center gap-2.5 hover:bg-white/[0.08] text-zinc-300 hover:text-white transition"
-      >
-        <Subtitles size={13} className="text-amber-400" />
-        <span>Subtitle Framing & Sync…</span>
-      </button>
-
-      {/* Audio Track Flyout */}
-      {hasMedia && (
-        <div
-          className="relative"
-          onMouseEnter={() => setActiveSubmenu('audio-track')}
-          onMouseLeave={() => setActiveSubmenu(null)}
-        >
-          <div className="w-full h-7 px-3 flex items-center justify-between hover:bg-white/[0.08] text-zinc-300 hover:text-white cursor-pointer transition">
-            <div className="flex items-center gap-2.5">
-              <Volume2 size={13} className="text-zinc-400" />
-              <span>Audio Track</span>
-            </div>
-            <ChevronRight size={12} className="text-zinc-500" />
-          </div>
-
-          {activeSubmenu === 'audio-track' && (
-            <div className="absolute left-full top-0 w-52 bg-[#0D0E15]/95 backdrop-blur-xl border border-white/[0.1] shadow-2xl py-1 text-zinc-200">
-              {audioTracks.length === 0 ? (
-                <div className="w-full h-6 px-3 flex items-center justify-between text-[11px] text-zinc-400">
-                  <span className="truncate">Primary Audio (Default)</span>
-                  <Check size={11} className="text-amber-400" />
-                </div>
-              ) : (
-                audioTracks.map((track) => {
-                  const isSelected = track.id === selectedAudioTrack;
-                  return (
-                    <button
-                      key={track.id}
-                      onClick={() => {
-                        onSelectAudioTrack?.(track.id);
-                        onClose();
-                      }}
-                      className={`w-full h-6 px-3 flex items-center justify-between hover:bg-white/[0.08] text-[11px] transition ${
-                        isSelected ? 'text-amber-400 font-semibold' : 'text-zinc-300'
-                      }`}
-                    >
-                      <span className="truncate">{track.title || track.language || `Track ${track.id}`}</span>
-                      {isSelected && <Check size={11} />}
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Subtitle Track Flyout */}
-      <div
-        className="relative"
-        onMouseEnter={() => setActiveSubmenu('subtitle-track')}
-        onMouseLeave={() => setActiveSubmenu(null)}
-      >
-        <div className="w-full h-7 px-3 flex items-center justify-between hover:bg-white/[0.08] text-zinc-300 hover:text-white cursor-pointer transition">
-          <div className="flex items-center gap-2.5">
-            <Subtitles size={13} className="text-zinc-400" />
-            <span>Subtitle Track</span>
-          </div>
-          <ChevronRight size={12} className="text-zinc-500" />
-        </div>
-
-        {activeSubmenu === 'subtitle-track' && (
-          <div className="absolute left-full top-0 w-48 bg-[#0D0E15]/95 backdrop-blur-xl border border-white/[0.1] shadow-2xl py-1 text-zinc-200">
-            <button
-              onClick={() => {
-                onSelectSubtitleTrack?.('off');
-                onClose();
-              }}
-              className={`w-full h-6 px-3 flex items-center justify-between hover:bg-white/[0.08] text-[11px] transition ${
-                selectedSubtitleTrack === 'off' ? 'text-amber-400 font-semibold' : 'text-zinc-300'
-              }`}
-            >
-              <span>None / Off</span>
-              {selectedSubtitleTrack === 'off' && <Check size={11} />}
-            </button>
-            {subtitleTracks.map((track) => {
-              const isSelected = track.id === selectedSubtitleTrack;
-              return (
-                <button
-                  key={track.id}
-                  onClick={() => {
-                    onSelectSubtitleTrack?.(track.id);
-                    onClose();
-                  }}
-                  className={`w-full h-6 px-3 flex items-center justify-between hover:bg-white/[0.08] text-[11px] transition ${
-                    isSelected ? 'text-amber-400 font-semibold' : 'text-zinc-300'
-                  }`}
-                >
-                  <span className="truncate">{track.title || track.language || track.id}</span>
-                  {isSelected && <Check size={11} />}
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Playlist Queue */}
-      <button
-        onClick={() => {
-          onOpenDrawer('playlist');
-          onClose();
-        }}
-        className="w-full h-7 px-3 flex items-center gap-2.5 hover:bg-white/[0.08] text-zinc-300 hover:text-white transition"
-      >
-        <ListMusic size={13} className="text-zinc-400" />
-        <span>Playlist Queue…</span>
-      </button>
-
-      <div className="w-full h-px bg-white/[0.08] my-1" />
-
-      {/* Video & Frame Capture */}
-      <button
-        onClick={() => {
-          onTakeScreenshot();
-          onClose();
-        }}
-        disabled={!hasMedia}
-        className="w-full h-7 px-3 flex items-center gap-2.5 hover:bg-white/[0.08] text-zinc-300 hover:text-white transition disabled:opacity-30"
-      >
-        <Camera size={13} className="text-zinc-400" />
-        <span>Save Current Frame…</span>
-      </button>
-
-      <button
-        onClick={() => {
-          onToggleFullscreen();
-          onClose();
-        }}
-        className="w-full h-7 px-3 flex items-center justify-between hover:bg-white/[0.08] text-zinc-300 hover:text-white transition"
-      >
-        <div className="flex items-center gap-2.5">
-          {isFullScreen ? <Minimize size={13} className="text-zinc-400" /> : <Maximize size={13} className="text-zinc-400" />}
-          <span>{isFullScreen ? 'Exit Fullscreen' : 'Fullscreen'}</span>
-        </div>
-        <span className="text-[10px] text-zinc-500 font-mono">F</span>
-      </button>
-
-      <div className="w-full h-px bg-white/[0.08] my-1" />
-
-      {/* Settings Modal */}
-      <button
-        onClick={() => {
-          onOpenSettings();
-          onClose();
-        }}
-        className="w-full h-7 px-3 flex items-center gap-2.5 hover:bg-white/[0.08] text-zinc-300 hover:text-white transition"
-      >
-        <SlidersHorizontal size={13} className="text-zinc-400" />
-        <span>Playback Settings…</span>
-      </button>
     </div>
   );
-};
-
+}

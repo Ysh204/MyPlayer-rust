@@ -13,13 +13,13 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "MyPlayer Pro",
         "width": 1280,
         "height": 760,
         "minWidth": 800,
         "minHeight": 500,
         "decorations": false,
-        "transparent": true,
         "center": true
       }
     ],
@@ -45,7 +45,7 @@
     "copyright": "Copyright © 2026 Yash Gaikwad",
     "category": "Video",
     "shortDescription": "Minimalist high-performance desktop media player",
-    "longDescription": "MyPlayer Pro is a razor-sharp, obsidian-glass desktop media player built with Tauri v2, Rust, and React.",
+    "longDescription": "MyPlayer Pro is a desktop player for local media with a playback queue, audio equalizer, and subtitle controls.",
     "windows": {
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",

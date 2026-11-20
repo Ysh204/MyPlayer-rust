@@ -1,946 +1,634 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { tauriClient } from '../../core/tauriClient';
-import type { DrawerPanel, EqPreset, EqState, PlaylistItem, SubtitleConfig, SubtitleCue, TrackInfo } from '../../core/types';
-import { TopWindowBar } from './TopWindowBar';
-import { BottomControlsBar } from './BottomControlsBar';
-import { OsdOverlay } from './OsdOverlay';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { DragEvent, MouseEvent } from 'react';
+import { FileVideo, FolderOpen, LoaderCircle } from 'lucide-react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { isDesktop, isSubtitleFile, subtitleExtensions, tauriClient, videoExtensions } from '../../core/tauriClient';
+import { readStorage, savedPositions, settingsKey, writeStorage } from '../../core/playbackStorage';
+import type { DrawerPanel, EqPreset, EqState, PlaylistItem, SubtitleConfig, TrackInfo } from '../../core/types';
 import { EqualizerPanel } from '../audio/EqualizerPanel';
 import { SubtitlePanel } from '../subtitles/SubtitlePanel';
 import { PlaylistPanel } from '../playlist/PlaylistPanel';
 import { PlaybackSettingsModal } from '../settings/PlaybackSettingsModal';
+import type { PlaybackSettings } from '../settings/PlaybackSettingsModal';
+import { BottomControlsBar } from './BottomControlsBar';
+import { OsdOverlay } from './OsdOverlay';
 import { PlayerContextMenu } from './PlayerContextMenu';
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Film, FolderOpen, ListMusic, Play } from 'lucide-react';
+import type { MenuAnchor } from './PlayerContextMenu';
+import { TopWindowBar } from './TopWindowBar';
+import { audioTrackList, readAudioTracks, usePlayerAudio } from './usePlayerAudio';
+import { usePlayerSubtitles } from './usePlayerSubtitles';
 
 const INITIAL_EQ: EqState = {
-  frequencies: [60, 230, 910, 3600, 14000],
-  gains: [0, 0, 0, 0, 0],
-  preamp_db: 0,
-  audio_delay_sec: 0,
-  compressor: false,
-  active_preset: 'Flat',
+  frequencies: [60, 230, 910, 3600, 14000], gains: [0, 0, 0, 0, 0],
+  preamp_db: 0, audio_delay_sec: 0, compressor: false, active_preset: 'Flat',
 };
-
 const INITIAL_SUB: SubtitleConfig = {
-  vertical_position: 92,
-  scale: 1,
-  delay_seconds: 0,
-  font_size: 24,
-  background_opacity: 0.65,
+  vertical_position: 92, scale: 1, delay_seconds: 0, font_size: 24, background_opacity: 0.65,
 };
+const INITIAL_SETTINGS: PlaybackSettings = { autoResume: true, seekStep: 5, volumeStep: 5, precisionSeeking: true };
+const MEDIA_ACCEPT = videoExtensions.map((extension) => '.' + extension).join(',');
+const SUBTITLE_ACCEPT = subtitleExtensions.map((extension) => '.' + extension).join(',');
+const SAMPLE: PlaylistItem[] = ['Are You Happy in Your Life', 'Trip of a Lifetime', 'The Box', 'The Corridor']
+  .map((title, index) => ({ id: 'sample-' + index, uri: '/sample_frame.jpg', title: 'Dark Matter · ' + title }));
+const preview = isDesktop ? new URLSearchParams() : new URLSearchParams(location.search);
+const sampleEnabled = preview.get('sample') === 'true';
+const initialDrawer = preview.get('drawer');
+const isSample = (item: PlaylistItem | null) => item?.id.startsWith('sample-');
 
-export const PlayerScreen: React.FC = () => {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-
-  // Playback & Window State
-  const [title, setTitle] = useState<string>('MyPlayer Pro');
-  const [videoSrc, setVideoSrc] = useState<string>('');
-  const [playing, setPlaying] = useState<boolean>(false);
-  const [currentTime, setCurrentTime] = useState<number>(0);
-  const [duration, setDuration] = useState<number>(0);
-  const [volume, setVolume] = useState<number>(100);
-  const [speed, setSpeed] = useState<number>(1.0);
-  const [loop, setLoop] = useState<boolean>(false);
-  const [drawer, setDrawer] = useState<DrawerPanel>('none');
-  const [hudVisible, setHudVisible] = useState<boolean>(true);
-  const [osdMessage, setOsdMessage] = useState<string | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
-  const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
-  const [isDraggingFile, setIsDraggingFile] = useState<boolean>(false);
-
-  // Right-click context menu state
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
-
-  // Playlist state
-  const [playlist, setPlaylist] = useState<PlaylistItem[]>([]);
-  const [playlistIndex, setPlaylistIndex] = useState<number>(-1);
-
-  // Preferences
-  const [hardwareDecoding, setHardwareDecoding] = useState<boolean>(true);
-  const [autoResume, setAutoResume] = useState<boolean>(true);
-  const [seekStepSeconds, setSeekStepSeconds] = useState<number>(5);
-  const [volumeStepPercent, setVolumeStepPercent] = useState<number>(5);
-  const [precisionSeeking, setPrecisionSeeking] = useState<boolean>(true);
-
-  // Audio DSP & Subtitle Framing State (Synced with Rust Backend)
-  const [eq, setEq] = useState<EqState>(INITIAL_EQ);
+export function PlayerScreen() {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const viewportRef = useRef<HTMLElement>(null);
+  const mediaInput = useRef<HTMLInputElement>(null);
+  const subtitleInput = useRef<HTMLInputElement>(null);
+  const addOnly = useRef(false);
+  const [media, setMedia] = useState<PlaylistItem | null>(sampleEnabled ? SAMPLE[0] : null);
+  const [playlist, setPlaylist] = useState<PlaylistItem[]>(sampleEnabled ? SAMPLE : []);
+  const [currentTime, setCurrentTime] = useState(sampleEnabled ? 1482 : 0);
+  const [duration, setDuration] = useState(sampleEnabled ? 3245 : 0);
+  const [playing, setPlaying] = useState(sampleEnabled);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [canSnapshot, setCanSnapshot] = useState(false);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  const [aspectRatio, setAspectRatio] = useState(sampleEnabled ? 16 / 9 : 0);
+  const [volume, setVolume] = useState(100);
+  const previousVolume = useRef(100);
+  const [speed, setSpeed] = useState(1);
+  const [loop, setLoop] = useState(false);
+  const [drawer, setDrawer] = useState<DrawerPanel>(initialDrawer === 'audio' || initialDrawer === 'subtitles' || initialDrawer === 'playlist' ? initialDrawer : 'none');
+  const [menu, setMenu] = useState<MenuAnchor | null>(preview.get('menu') === 'true' ? { x: 430, y: 165 } : null);
+  const [settingsOpen, setSettingsOpen] = useState(preview.get('settings') === 'true');
+  const [settings, setSettings] = useState(() => ({ ...INITIAL_SETTINGS, ...readStorage<Partial<PlaybackSettings>>(settingsKey, {}) }));
+  const [hardwareDecoding, setHardwareDecoding] = useState<boolean | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const [dragging, setDragging] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const statusTimer = useRef<number>();
+  const hudTimer = useRef<number>();
+  const resumeClock = useRef(0);
+  const mediaGeneration = useRef(0);
+  const blobUrls = useRef(new Set<string>());
+  const [eq, setEq] = useState(INITIAL_EQ);
   const [presets, setPresets] = useState<EqPreset[]>([]);
-  const [afString, setAfString] = useState<string>('');
-  const [subConfig, setSubConfig] = useState<SubtitleConfig>(INITIAL_SUB);
-  const [cues, setCues] = useState<SubtitleCue[]>([]);
-  const [activeCueText, setActiveCueText] = useState<string>('');
+  const inspectedAudio = useRef<TrackInfo[]>([]);
+  const [audioTracks, setAudioTracks] = useState<TrackInfo[]>([]);
+  const [selectedAudio, setSelectedAudio] = useState('');
+  const [subtitleConfig, setSubtitleConfig] = useState(INITIAL_SUB);
 
-  // Audio & Subtitle Stream Tracks
-  const [audioTracks, setAudioTracks] = useState<TrackInfo[]>([
-    { id: 'default', title: 'Primary Audio (Default / Stereo / 5.1)', isDefault: true },
-  ]);
-  const [selectedAudioTrack, setSelectedAudioTrack] = useState<string>('default');
-  const [subtitleTracks, setSubtitleTracks] = useState<TrackInfo[]>([]);
-  const [selectedSubtitleTrack, setSelectedSubtitleTrack] = useState<string>('default');
-
-  const osdTimerRef = useRef<number | null>(null);
-  const hudTimerRef = useRef<number | null>(null);
-
-  const showOsd = useCallback((msg: string) => {
-    setOsdMessage(msg);
-    if (osdTimerRef.current) window.clearTimeout(osdTimerRef.current);
-    osdTimerRef.current = window.setTimeout(() => setOsdMessage(null), 1800);
+  const showStatus = useCallback((message: string) => {
+    setStatus(message);
+    window.clearTimeout(statusTimer.current);
+    statusTimer.current = window.setTimeout(() => setStatus(null), 2300);
   }, []);
+  const { tracks: subtitleTracks, selected: selectedSubtitle, reset: resetSubtitles, register: registerSubtitles,
+    load: loadSubtitles, select: selectSubtitle, cueText } = usePlayerSubtitles(videoRef, showStatus);
+  const prepareAudio = usePlayerAudio(videoRef, eq, volume);
 
-  const bumpHud = useCallback(() => {
-    setHudVisible(true);
-    if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
-    hudTimerRef.current = window.setTimeout(() => {
-      if (drawer === 'none' && !settingsOpen && !contextMenu && videoSrc) {
-        setHudVisible(false);
+  const sample = isSample(media);
+  const index = playlist.findIndex(({ id }) => id === media?.id);
+  const previous = index > 0 ? playlist[index - 1] : undefined;
+  const next = index >= 0 ? playlist[index + 1] : undefined;
+  const canHide = Boolean(media && !loading && !error && drawer === 'none' && !menu && !settingsOpen);
+  const hudHidden = canHide && !controlsVisible;
+  const hasTransport = Boolean(media || playlist.length || drawer !== 'none');
+  const showControls = useCallback(() => {
+    setControlsVisible(true);
+    window.clearTimeout(hudTimer.current);
+    if (canHide) hudTimer.current = window.setTimeout(() => {
+      if (!rootRef.current?.querySelector('.transport:hover, .window-bar:hover, .transport :focus-visible, .window-bar :focus-visible')) {
+        setControlsVisible(false);
       }
-    }, 2800);
-  }, [drawer, settingsOpen, contextMenu, videoSrc]);
+    }, 2100);
+  }, [canHide]);
 
   useEffect(() => {
-    tauriClient.getEqPresets().then(setPresets).catch(() => {});
+    showControls();
+    return () => window.clearTimeout(hudTimer.current);
+  }, [showControls]);
 
-    if (typeof window !== 'undefined') {
-      const p = new URLSearchParams(window.location.search);
-      const d = p.get('drawer') as DrawerPanel;
-      if (d) setDrawer(d);
-      if (p.get('menu') === 'true') setContextMenu({ x: 440, y: 180 });
-      if (p.get('settings') === 'true') setSettingsOpen(true);
-      if (p.get('sample') === 'true') {
-        setTitle('Dark Matter (2024) - S01E01 - Are You Happy in Your Life');
-        setVideoSrc('sample://preview');
-        setPlaying(true);
-        setCurrentTime(1482);
-        setDuration(3245);
-        setPlaylist([
-          { id: '1', title: 'Dark Matter - S01E01 - Are You Happy in Your Life', uri: 'sample://1' },
-          { id: '2', title: 'Dark Matter - S01E02 - Trip of a Lifetime', uri: 'sample://2' },
-          { id: '3', title: 'Dark Matter - S01E03 - The Box', uri: 'sample://3' },
-          { id: '4', title: 'Dark Matter - S01E04 - The Corridor', uri: 'sample://4' },
-        ]);
-        setPlaylistIndex(0);
-        setActiveCueText('Jason: "Are you happy in your life?"\nDaniela: "More than you know."');
-
-        setAudioTracks([
-          { id: 'audio-0', title: 'English [Dolby 5.1 Surround]', language: 'en', isDefault: true },
-          { id: 'audio-1', title: 'English [Stereo 2.0]', language: 'en' },
-          { id: 'audio-2', title: 'Director’s Commentary', language: 'en' },
-        ]);
-        setSelectedAudioTrack('audio-0');
-
-        setSubtitleTracks([
-          { id: 'sub-0', title: 'English [CC] (Full Dialogue)', language: 'en', isDefault: true },
-          { id: 'sub-1', title: 'Spanish (Español Latino)', language: 'es' },
-          { id: 'sub-2', title: 'French (Français)', language: 'fr' },
-        ]);
-        setSelectedSubtitleTrack('sub-0');
-      }
-    }
-  }, []);
-
-  // Smooth 60fps continuous timeline playback clock via requestAnimationFrame
   useEffect(() => {
-    let animId: number;
-    const updateLoop = () => {
-      if (videoRef.current && !videoRef.current.paused) {
-        setCurrentTime(videoRef.current.currentTime);
-      }
-      animId = requestAnimationFrame(updateLoop);
+    const urls = blobUrls.current;
+    void tauriClient.getEqPresets().then(setPresets).catch(() => showStatus('Could not load equalizer presets'));
+    if (isDesktop) void tauriClient.getHardwareDecoding().then(setHardwareDecoding).catch(() => {});
+    return () => {
+      window.clearTimeout(statusTimer.current);
+      urls.forEach((url) => URL.revokeObjectURL(url));
+      urls.clear();
     };
-    animId = requestAnimationFrame(updateLoop);
-    return () => cancelAnimationFrame(animId);
+  }, [showStatus]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const observer = new ResizeObserver(([{ contentRect }]) => setSize({ width: contentRect.width, height: contentRect.height }));
+    observer.observe(viewport);
+    return () => observer.disconnect();
   }, []);
 
-  // Direct synchronous seeking for instant responsive Rewind / Fast Forward
-  const handleSeekDelta = useCallback((delta: number) => {
-    if (!videoRef.current) return;
-    const next = Math.max(0, Math.min(videoRef.current.currentTime + delta, videoRef.current.duration || Infinity));
-    videoRef.current.currentTime = next;
-    setCurrentTime(next);
-    showOsd(`${delta > 0 ? '+' : ''}${delta}s`);
-  }, [showOsd]);
+  useEffect(() => {
+    if (!playing || sample) return;
+    let frame: number;
+    const tick = () => {
+      const video = videoRef.current;
+      if (video) setCurrentTime(video.currentTime);
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [playing, sample]);
 
-  // Sync EQ State to Rust Backend
-  const handleEqChange = async (nextEq: EqState, toast?: string) => {
-    setEq(nextEq);
-    if (toast) showOsd(toast);
+  const updateTracks = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const tracks = readAudioTracks(video, inspectedAudio.current);
+    setAudioTracks(tracks);
+    setSelectedAudio(tracks.find((track) => track.isDefault)?.id ?? '');
+  }, []);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    const tracks = video && audioTrackList(video);
+    tracks?.addEventListener('addtrack', updateTracks);
+    tracks?.addEventListener('removetrack', updateTracks);
+    tracks?.addEventListener('change', updateTracks);
+    return () => {
+      tracks?.removeEventListener('addtrack', updateTracks);
+      tracks?.removeEventListener('removetrack', updateTracks);
+      tracks?.removeEventListener('change', updateTracks);
+    };
+  }, [updateTracks]);
+
+  useEffect(() => {
+    if (!media?.path) return;
+    let active = true;
+    void tauriClient.inspectMedia(media.path).then((tracks) => {
+      if (!active) return;
+      inspectedAudio.current = tracks.audioTracks;
+      updateTracks();
+      registerSubtitles(tracks.subtitleTracks);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [media, registerSubtitles, updateTracks]);
+
+  const savePosition = useCallback(() => {
+    const video = videoRef.current;
+    if (settings.autoResume && media?.path && video?.readyState && !video.error) {
+      savedPositions.save(media.path, video.currentTime, video.duration);
+    }
+  }, [media, settings.autoResume]);
+
+  useEffect(() => {
+    const saveOnHide = () => { if (document.visibilityState === 'hidden') savePosition(); };
+    window.addEventListener('pagehide', savePosition);
+    document.addEventListener('visibilitychange', saveOnHide);
+    return () => {
+      window.removeEventListener('pagehide', savePosition);
+      document.removeEventListener('visibilitychange', saveOnHide);
+    };
+  }, [savePosition]);
+
+  function selectMedia(item: PlaylistItem | null) {
+    if (item === media && !error) {
+      if (item && !playing) togglePlay();
+      return;
+    }
+    savePosition();
+    ++mediaGeneration.current;
+    videoRef.current?.pause();
+    resetSubtitles(item?.path);
+    inspectedAudio.current = [];
+    setAudioTracks([]);
+    setSelectedAudio('');
+    setCurrentTime(0);
+    setDuration(isSample(item) ? 3245 : 0);
+    setAspectRatio(isSample(item) ? 16 / 9 : 0);
+    setCanSnapshot(false);
+    setError(null);
+    setLoading(Boolean(item && !isSample(item)));
+    setPlaying(Boolean(isSample(item)));
+    setMedia(item);
+    resumeClock.current = 0;
+    if (item && item.uri === media?.uri && !isSample(item)) videoRef.current?.load();
+  }
+
+  function openItems(items: PlaylistItem[], append: boolean) {
+    if (!items.length) return;
+    prepareAudio();
+    setPlaylist((queue) => [...new Map([...queue, ...items].map((item) => [item.id, item])).values()]);
+    if (!append || !media) selectMedia(items[0]);
+  }
+
+  function createBrowserMedia(file: File) {
+    const id = 'file:' + file.name + ':' + file.size + ':' + file.lastModified;
+    const queued = playlist.find((item) => item.id === id);
+    if (queued) return queued;
+    const uri = URL.createObjectURL(file);
+    blobUrls.current.add(uri);
+    return { id, uri, title: file.name.replace(/\.[^/.]+$/, '') || file.name };
+  }
+
+  async function openFile(append = false) {
+    prepareAudio();
+    if (!isDesktop) {
+      addOnly.current = append;
+      mediaInput.current?.click();
+      return;
+    }
     try {
-      const af = await tauriClient.syncAudioEq(nextEq);
-      setAfString(af);
+      openItems((await tauriClient.pickMedia()).map(tauriClient.localMedia), append);
     } catch {
-      // Fallback
+      showStatus('Could not open the file picker');
     }
-  };
+  }
 
-  // Sync Subtitle Framing State to Rust Backend
-  const handleSubChange = async (nextSub: SubtitleConfig, toast?: string) => {
-    setSubConfig(nextSub);
-    if (toast) showOsd(toast);
+  async function openSubtitle() {
+    if (!media) return;
+    const generation = mediaGeneration.current;
+    if (!isDesktop) {
+      subtitleInput.current?.click();
+      return;
+    }
     try {
-      await tauriClient.syncSubtitleConfig(nextSub);
-    } catch {}
+      const path = await tauriClient.pickSubtitle();
+      if (path) await loadSubtitles(path.split(/[\\/]/).pop() || path, () => tauriClient.loadSubtitle(path), () => mediaGeneration.current === generation);
+    } catch {
+      showStatus('Could not open the subtitle picker');
+    }
+  }
+
+  const nativeDrop = useRef<(paths: string[]) => void>(() => {});
+  nativeDrop.current = (paths) => {
+    const videos = paths.filter((path) => !isSubtitleFile(path)).map(tauriClient.localMedia);
+    openItems(videos, drawer === 'playlist');
+    const generation = mediaGeneration.current;
+    const subtitles = paths.filter(isSubtitleFile);
+    if (subtitles.length && !media && !videos.length) showStatus('Open a video before adding subtitles');
+    else for (const path of subtitles) {
+      void loadSubtitles(path.split(/[\\/]/).pop() || path, () => tauriClient.loadSubtitle(path), () => mediaGeneration.current === generation);
+    }
   };
 
-  // Parse & Set Subtitle Cues from Raw Text
-  const parseAndSetSubtitleCues = useCallback((raw: string, filename?: string) => {
-    const parsed: SubtitleCue[] = [];
-    const toSec = (t: string) => {
-      const [h, m, s] = t.replace(',', '.').split(':').map(Number);
-      return h * 3600 + m * 60 + s;
-    };
+  useEffect(() => {
+    if (!isDesktop) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void getCurrentWindow().onDragDropEvent(({ payload }) => {
+      if (payload.type === 'enter') setDragging(true);
+      if (payload.type === 'leave' || payload.type === 'drop') setDragging(false);
+      if (payload.type === 'drop') nativeDrop.current(payload.paths);
+    }).then((stop) => { if (disposed) stop(); else unlisten = stop; }).catch(() => {});
+    return () => { disposed = true; unlisten?.(); };
+  }, []);
 
-    for (const block of raw.trim().split(/\n\s*\n/)) {
-      const lines = block.split('\n');
-      const idx = lines.findIndex((l) => l.includes('-->'));
-      if (idx === -1) continue;
-      const [start, end] = lines[idx].split('-->').map((s) => toSec(s.trim()));
-      const text = lines.slice(idx + 1).join('\n');
-      parsed.push({ start, end, text });
+  function dropFiles(event: DragEvent) {
+    if (isDesktop || !event.dataTransfer.types.includes('Files')) return;
+    event.preventDefault();
+    setDragging(false);
+    const files = Array.from(event.dataTransfer.files);
+    const videos = files.filter((file) => !isSubtitleFile(file.name)).map(createBrowserMedia);
+    openItems(videos, drawer === 'playlist');
+    const generation = mediaGeneration.current;
+    const subtitles = files.filter((file) => isSubtitleFile(file.name));
+    if (subtitles.length && !media && !videos.length) showStatus('Open a video before adding subtitles');
+    else for (const file of subtitles) void loadSubtitles(file.name, () => file.text(), () => mediaGeneration.current === generation);
+  }
+
+  function forgetItem(item: PlaylistItem) {
+    if (blobUrls.current.delete(item.uri)) URL.revokeObjectURL(item.uri);
+  }
+
+  function removeItem(id: string) {
+    const at = playlist.findIndex((item) => item.id === id);
+    if (at < 0) return;
+    if (media?.id === id) selectMedia(playlist[at + 1] ?? playlist[at - 1] ?? null);
+    forgetItem(playlist[at]);
+    setPlaylist((queue) => queue.filter((item) => item.id !== id));
+  }
+
+  function moveItem(id: string, before: string | null) {
+    if (id === before) return;
+    setPlaylist((queue) => {
+      const item = queue.find((entry) => entry.id === id);
+      if (!item) return queue;
+      const reordered = queue.filter((entry) => entry.id !== id);
+      const at = reordered.findIndex((entry) => entry.id === before);
+      reordered.splice(at < 0 ? reordered.length : at, 0, item);
+      return reordered;
+    });
+  }
+
+  function playVideo() {
+    const video = videoRef.current;
+    if (!video) return;
+    prepareAudio();
+    const generation = mediaGeneration.current;
+    void video.play().catch((reason: DOMException) => {
+      if (mediaGeneration.current !== generation || reason.name === 'AbortError') return;
+      setLoading(false);
+      if (reason.name === 'NotAllowedError') showStatus('Press Play to start');
+    });
+  }
+
+  function togglePlay() {
+    const video = videoRef.current;
+    if (!media || error || !video) return;
+    if (sample) setPlaying((value) => !value);
+    else if (video.paused) playVideo();
+    else video.pause();
+  }
+
+  function seek(time: number) {
+    if (!duration) return;
+    const clamped = Math.max(0, Math.min(time, duration));
+    if (sample) {
+      setCurrentTime(clamped);
+      return;
     }
-    setCues(parsed);
-    if (filename) showOsd(`Subtitles: ${filename}`);
-  }, [showOsd]);
+    const video = videoRef.current as (HTMLVideoElement & { fastSeek?: (seconds: number) => void }) | null;
+    if (!video?.readyState) return;
+    if (!settings.precisionSeeking && video.fastSeek) video.fastSeek(clamped);
+    else video.currentTime = settings.precisionSeeking ? clamped : Math.min(Math.round(clamped), duration);
+    setCurrentTime(video.currentTime);
+    showControls();
+  }
 
-  // Load Subtitle File from Disk via Rust backend
-  const loadExternalSubtitleFile = useCallback(async (filePath: string, title?: string) => {
+  function seekBy(delta: number) {
+    seek((sample ? currentTime : videoRef.current?.currentTime ?? 0) + delta);
+  }
+
+  function changeVolume(value: number) {
+    prepareAudio();
+    const nextVolume = Math.max(0, Math.min(150, value));
+    if (nextVolume > 0) previousVolume.current = nextVolume;
+    setVolume(nextVolume);
+  }
+
+  function mute() {
+    changeVolume(volume ? 0 : previousVolume.current);
+  }
+
+  function selectAudio(id: string) {
+    const video = videoRef.current;
+    const tracks = video && audioTrackList(video);
+    const index = Number(id.split(':')[1]);
+    if (!tracks?.[index]) return;
+    tracks[index].enabled = true;
+    for (let i = 0; i < tracks.length; i++) if (i !== index) tracks[i].enabled = false;
+    updateTracks();
+  }
+
+  useEffect(() => {
+    const update = () => setFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', update);
+    return () => document.removeEventListener('fullscreenchange', update);
+  }, []);
+
+  async function changeFullscreen(enabled: boolean) {
     try {
-      const content = await tauriClient.loadSubtitleFile(filePath);
-      if (content) {
-        parseAndSetSubtitleCues(content, title || filePath.split(/[\\/]/).pop());
+      if (isDesktop) {
+        await getCurrentWindow().setFullscreen(enabled);
+        setFullscreen(enabled);
+      } else if (enabled) {
+        await rootRef.current?.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
       }
-    } catch (err) {
-      console.error('Failed to load subtitle file:', err);
+    } catch {
+      showStatus('Fullscreen is unavailable');
     }
-  }, [parseAndSetSubtitleCues]);
+  }
 
-  // Open Media File by OS file path (from Native Drag & Drop, File Dialog, or Playlist)
-  const handleOpenFilePath = useCallback(
-    async (filePath: string) => {
-      const ext = filePath.split('.').pop()?.toLowerCase() || '';
+  function openMenu(event: MouseEvent<HTMLButtonElement>) {
+    if (menu?.trigger) { setMenu(null); return; }
+    const rect = event.currentTarget.getBoundingClientRect();
+    setMenu({ x: rect.right, y: rect.top - 6, above: true, trigger: event.currentTarget });
+  }
 
-      // If user dropped an external subtitle file:
-      if (ext === 'srt' || ext === 'vtt' || ext === 'ass' || ext === 'ssa' || ext === 'sub') {
-        const fileName = filePath.split(/[\\/]/).pop() || 'Subtitle';
-        await loadExternalSubtitleFile(filePath, fileName);
-        const newTrack: TrackInfo = {
-          id: `ext-${Date.now()}`,
-          title: fileName,
-          language: 'External',
-          isDefault: true,
-          filePath: filePath,
-        };
-        setSubtitleTracks((prev) => [newTrack, ...prev.filter((t) => !t.id.startsWith('ext-'))]);
-        setSelectedSubtitleTrack(newTrack.id);
-        showOsd(`Subtitles: ${fileName}`);
-        return;
-      }
+  const closeMenu = useCallback((restoreFocus?: boolean) => {
+    if (restoreFocus) menu?.trigger?.focus();
+    setMenu(null);
+  }, [menu]);
 
-      try {
-        const media = await tauriClient.openFilePath(filePath);
-        if (media) {
-          setVideoSrc(media.assetUrl);
-          setTitle(media.cleanTitle);
-          showOsd(`Playing: ${media.cleanTitle}`);
-          const newItem: PlaylistItem = {
-            id: media.rawPath,
-            uri: media.assetUrl,
-            title: media.cleanTitle,
-          };
-          setPlaylist((prev) => {
-            if (prev.some((p) => p.id === media.rawPath)) return prev;
-            return [...prev, newItem];
-          });
-          setPlaylistIndex(playlist.length);
-
-          // Populate audio tracks discovered by Rust container inspection
-          if (media.audioTracks && media.audioTracks.length > 0) {
-            setAudioTracks(media.audioTracks);
-            const activeAudio = media.audioTracks.find((a) => a.isDefault) || media.audioTracks[0];
-            setSelectedAudioTrack(activeAudio.id);
-          } else {
-            setAudioTracks([
-              { id: 'default', title: 'Primary Audio (Default / Stereo / 5.1)', isDefault: true },
-            ]);
-            setSelectedAudioTrack('default');
-          }
-
-          // Populate subtitle tracks (embedded MKV tracks + sidecar .srt files)
-          if (media.subtitleTracks && media.subtitleTracks.length > 0) {
-            setSubtitleTracks(media.subtitleTracks);
-            const activeSub = media.subtitleTracks.find((s) => s.isDefault);
-            if (activeSub) {
-              setSelectedSubtitleTrack(activeSub.id);
-              if (activeSub.filePath) {
-                loadExternalSubtitleFile(activeSub.filePath, activeSub.title);
-              }
-            } else {
-              setSelectedSubtitleTrack('off');
-            }
-          } else {
-            setSubtitleTracks([]);
-            setSelectedSubtitleTrack('off');
-          }
-
-          if (videoRef.current) {
-            videoRef.current.src = media.assetUrl;
-            videoRef.current.play().catch(() => {});
-          }
-        }
-      } catch (err) {
-        console.error('Failed to open media by path:', err);
-      }
-    },
-    [loadExternalSubtitleFile, playlist.length, showOsd]
-  );
-
-  // Open Media File with IMMEDIATE AUTOPLAY & Full Stream Track Discovery
-  const handleOpenFile = async () => {
-    try {
-      const media = await tauriClient.pickAndOpenVideo();
-      if (media && media.rawPath) {
-        if (media.rawPath === 'sample.mp4') {
-          // Browser mock mode
-          setVideoSrc(media.assetUrl);
-          setTitle(media.cleanTitle);
-          setAudioTracks(media.audioTracks || []);
-          setSelectedAudioTrack(media.audioTracks?.[0]?.id || 'default');
-          setSubtitleTracks(media.subtitleTracks || []);
-          setSelectedSubtitleTrack(media.subtitleTracks?.[0]?.id || 'off');
-          showOsd(`Playing: ${media.cleanTitle}`);
-          return;
-        }
-        await handleOpenFilePath(media.rawPath);
-      }
-    } catch (err) {
-      console.error('Failed to open media:', err);
-    }
-  };
-
-  // Toggle Fullscreen
-  const toggleFullscreen = async () => {
-    try {
-      const appWindow = getCurrentWindow();
-      const current = await appWindow.isFullscreen();
-      await appWindow.setFullscreen(!current);
-      setIsFullScreen(!current);
-      showOsd(!current ? 'Fullscreen' : 'Exit Fullscreen');
-    } catch (_) {
-      setIsFullScreen((prev) => !prev);
-    }
-  };
-
-  // Change Playback Speed
-  const handleSetSpeed = (newSpeed: number) => {
-    setSpeed(newSpeed);
-    if (videoRef.current) {
-      videoRef.current.playbackRate = newSpeed;
-    }
-    showOsd(`Speed: ${newSpeed}x`);
-  };
-
-  // Take Screenshot of Current Frame
-  const handleTakeScreenshot = () => {
-    if (!videoRef.current) return;
+  async function saveFrame() {
+    const video = videoRef.current;
+    if (!video || !media || !canSnapshot) return;
     try {
       const canvas = document.createElement('canvas');
-      canvas.width = videoRef.current.videoWidth || 1920;
-      canvas.height = videoRef.current.videoHeight || 1080;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-        const a = document.createElement('a');
-        a.download = `${title}_${Math.round(currentTime)}s.png`;
-        a.href = canvas.toDataURL('image/png');
-        a.click();
-        showOsd('Saved Frame Screenshot');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d')?.drawImage(video, 0, 0);
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve));
+      if (!blob) throw new Error('No frame');
+      const name = media.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_') + ' - ' + Math.floor(video.currentTime) + 's.png';
+      if (isDesktop) {
+        if (!(await tauriClient.saveFrame(name, blob))) return;
+      } else {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.download = name;
+        link.href = url;
+        link.click();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
       }
-    } catch (_) {
-      showOsd('Snapshot failed (CORS/Format)');
+      showStatus('Frame saved');
+    } catch {
+      showStatus('Could not save the current frame');
     }
-  };
+  }
 
-  // Close Active Media
-  const handleCloseMedia = () => {
-    setVideoSrc('');
-    setTitle('MyPlayer Pro');
-    setPlaying(false);
-    setCurrentTime(0);
-    setDuration(0);
-    showOsd('Closed Media');
-  };
-
-  // Parse External .SRT File
-  const handleLoadSrt = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const raw = await file.text();
-    parseAndSetSubtitleCues(raw, file.name);
-
-    const newTrack: TrackInfo = {
-      id: `external-${Date.now()}`,
-      title: file.name,
-      language: 'External',
-      isDefault: true,
-    };
-    setSubtitleTracks((prev) => [newTrack, ...prev.filter((t) => !t.id.startsWith('external'))]);
-    setSelectedSubtitleTrack(newTrack.id);
-  };
-
-  // Detect Audio and Subtitle Tracks from the HTML5 media element (Fallback if container inspection has none)
-  const detectTracks = useCallback(() => {
-    if (!videoRef.current) return;
-
-    // 1. Audio Tracks (Chromium / WebView2 audioTracks API)
-    const v = videoRef.current as any;
-    if (v && v.audioTracks && v.audioTracks.length > 1) {
-      const detectedAudio: TrackInfo[] = [];
-      for (let i = 0; i < v.audioTracks.length; i++) {
-        const at = v.audioTracks[i];
-        detectedAudio.push({
-          id: at.id || `audio-${i}`,
-          title: at.label || `Audio Track ${i + 1} (${at.language || 'Stereo'})`,
-          language: at.language,
-          isDefault: at.enabled || i === 0,
-        });
-      }
-      setAudioTracks(detectedAudio);
-      const activeAudio = detectedAudio.find((a) => a.isDefault) || detectedAudio[0];
-      if (activeAudio) setSelectedAudioTrack(activeAudio.id);
+  const shortcuts = useRef<(event: KeyboardEvent) => void>(() => {});
+  shortcuts.current = (event) => {
+    if (event.defaultPrevented) return;
+    if (event.key === 'Escape') {
+      if (settingsOpen) return;
+      if (menu) closeMenu(true);
+      else if (drawer !== 'none') setDrawer('none');
+      else if (fullscreen && isDesktop) void changeFullscreen(false);
+      return;
     }
-
-    // 2. Subtitle Tracks (video.textTracks)
-    if (videoRef.current.textTracks && videoRef.current.textTracks.length > 0) {
-      const tt = videoRef.current.textTracks;
-      const detectedSubs: TrackInfo[] = [];
-      for (let i = 0; i < tt.length; i++) {
-        const t = tt[i];
-        detectedSubs.push({
-          id: `embedded-${i}`,
-          title: t.label || `Track ${i + 1} (${t.language || 'Embedded'})`,
-          language: t.language,
-          isDefault: t.mode === 'showing' || i === 0,
-        });
-      }
-      if (detectedSubs.length > 0) {
-        setSubtitleTracks((prev) => {
-          const combined = [...prev];
-          detectedSubs.forEach((ds) => {
-            if (!combined.some((c) => c.id === ds.id)) combined.push(ds);
-          });
-          return combined;
-        });
-      }
+    if (settingsOpen || menu || event.altKey || event.isComposing) return;
+    if ((event.ctrlKey || event.metaKey) && event.code === 'KeyO') {
+      event.preventDefault();
+      if (!event.repeat) void openFile();
+      return;
     }
+    const target = event.target;
+    if (event.ctrlKey || event.metaKey || (target instanceof HTMLElement &&
+      target.closest('input, select, textarea, [contenteditable="true"]'))) return;
+    switch (event.code) {
+      case 'Space':
+        if (event.repeat || (target instanceof Element && target.closest('button'))) return;
+        togglePlay();
+        break;
+      case 'ArrowLeft': case 'KeyJ': seekBy(-settings.seekStep); break;
+      case 'ArrowRight': case 'KeyL': seekBy(settings.seekStep); break;
+      case 'ArrowUp': changeVolume(volume + settings.volumeStep); break;
+      case 'ArrowDown': changeVolume(volume - settings.volumeStep); break;
+      case 'KeyM': if (!event.repeat) mute(); break;
+      case 'KeyF': case 'F11': if (!event.repeat) void changeFullscreen(!fullscreen); break;
+      default: return;
+    }
+    event.preventDefault();
+    showControls();
+  };
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => shortcuts.current(event);
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
   }, []);
 
-  const handleSelectAudioTrack = (id: string) => {
-    setSelectedAudioTrack(id);
-    const v = videoRef.current as any;
-    if (v && v.audioTracks && v.audioTracks.length > 0) {
-      for (let i = 0; i < v.audioTracks.length; i++) {
-        v.audioTracks[i].enabled = (v.audioTracks[i].id === id || `audio-${i}` === id);
-      }
-    }
-    const track = audioTracks.find((t) => t.id === id);
-    showOsd(`Audio: ${track?.title || id}`);
-  };
-
-  const handleSelectSubtitleTrack = async (id: string) => {
-    setSelectedSubtitleTrack(id);
-    if (id === 'off') {
-      setActiveCueText('');
-      if (videoRef.current && videoRef.current.textTracks) {
-        for (let i = 0; i < videoRef.current.textTracks.length; i++) {
-          videoRef.current.textTracks[i].mode = 'disabled';
-        }
-      }
-      showOsd('Subtitles: Off');
-      return;
-    }
-
-    const track = subtitleTracks.find((t) => t.id === id);
-    if (track?.filePath) {
-      await loadExternalSubtitleFile(track.filePath, track.title);
-    } else if (videoRef.current && videoRef.current.textTracks) {
-      for (let i = 0; i < videoRef.current.textTracks.length; i++) {
-        videoRef.current.textTracks[i].mode = (id === `embedded-${i}`) ? 'showing' : 'disabled';
-      }
-    }
-    showOsd(`Subtitles: ${track?.title || id}`);
-  };
-
-  // Match Subtitle Cue Against Video Clock + Delay Offset
-  useEffect(() => {
-    if (selectedSubtitleTrack === 'off') {
-      setActiveCueText('');
-      return;
-    }
-    const adjusted = currentTime - subConfig.delay_seconds;
-    const match = cues.find((c) => adjusted >= c.start && adjusted <= c.end);
-    setActiveCueText(match ? match.text : '');
-  }, [currentTime, cues, subConfig.delay_seconds, selectedSubtitleTrack]);
-
-  const formatTime = (sec: number) => {
-    if (!Number.isFinite(sec) || sec < 0) return '00:00';
-    const h = Math.floor(sec / 3600);
-    const m = Math.floor((sec % 3600) / 60).toString().padStart(2, '0');
-    const s = Math.floor(sec % 60).toString().padStart(2, '0');
-    return h > 0 ? `${h}:${m}:${s}` : `${m}:${s}`;
-  };
-
-  // Global Keyboard shortcuts (does NOT pop up HUD bars on seek / volume)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-
-      if (e.code === 'Space') {
-        e.preventDefault();
-        if (videoRef.current) {
-          if (videoRef.current.paused) {
-            videoRef.current.play().catch(() => {});
-            showOsd('Play');
-          } else {
-            videoRef.current.pause();
-            showOsd('Pause');
-          }
-        }
-      } else if (e.code === 'ArrowLeft' || e.code === 'KeyJ') {
-        e.preventDefault();
-        handleSeekDelta(-seekStepSeconds);
-      } else if (e.code === 'ArrowRight' || e.code === 'KeyL') {
-        e.preventDefault();
-        handleSeekDelta(seekStepSeconds);
-      } else if (e.code === 'ArrowUp') {
-        e.preventDefault();
-        const nextVol = Math.min(volume + volumeStepPercent, 150);
-        setVolume(nextVol);
-        if (videoRef.current) videoRef.current.volume = Math.min(nextVol / 100, 1);
-        showOsd(`Volume: ${nextVol}%`);
-      } else if (e.code === 'ArrowDown') {
-        e.preventDefault();
-        const nextVol = Math.max(volume - volumeStepPercent, 0);
-        setVolume(nextVol);
-        if (videoRef.current) videoRef.current.volume = Math.min(nextVol / 100, 1);
-        showOsd(`Volume: ${nextVol}%`);
-      } else if (e.code === 'KeyM') {
-        e.preventDefault();
-        if (volume > 0) {
-          setVolume(0);
-          if (videoRef.current) videoRef.current.volume = 0;
-          showOsd('Muted');
-        } else {
-          setVolume(100);
-          if (videoRef.current) videoRef.current.volume = 1;
-          showOsd('Volume: 100%');
-        }
-      } else if (e.code === 'KeyF' || e.code === 'F11') {
-        e.preventDefault();
-        toggleFullscreen();
-      } else if (e.code === 'KeyO' && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        handleOpenFile();
-      } else if (e.code === 'Escape') {
-        if (contextMenu) setContextMenu(null);
-        if (drawer !== 'none') setDrawer('none');
-        if (settingsOpen) setSettingsOpen(false);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showOsd, volume, seekStepSeconds, volumeStepPercent, drawer, settingsOpen, handleSeekDelta, contextMenu]);
-
-  // Native Tauri window drag-and-drop listener (provides OS file paths)
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    try {
-      getCurrentWindow()
-        .onDragDropEvent(async (event) => {
-          if (event.payload.type === 'drop') {
-            setIsDraggingFile(false);
-            const paths = event.payload.paths;
-            if (paths && paths.length > 0) {
-              await handleOpenFilePath(paths[0]);
-            }
-          } else if (event.payload.type === 'enter') {
-            setIsDraggingFile(true);
-          } else if (event.payload.type === 'leave') {
-            setIsDraggingFile(false);
-          }
-        })
-        .then((fn) => {
-          unlisten = fn;
-        })
-        .catch(() => {});
-    } catch (_) {}
-
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, [handleOpenFilePath]);
-
-  // Drag and drop handling with AUTOPLAY
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDraggingFile(true);
-  };
-  const handleDragLeave = () => {
-    setIsDraggingFile(false);
-  };
-  const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDraggingFile(false);
-    const file = e.dataTransfer.files?.[0];
-    if (!file) return;
-
-    // 1. If user drops a subtitle file directly onto the screen
-    const nameLower = file.name.toLowerCase();
-    if (
-      nameLower.endsWith('.srt') ||
-      nameLower.endsWith('.vtt') ||
-      nameLower.endsWith('.ass') ||
-      nameLower.endsWith('.ssa')
-    ) {
-      const text = await file.text();
-      parseAndSetSubtitleCues(text, file.name);
-      const newTrack: TrackInfo = {
-        id: `ext-${Date.now()}`,
-        title: file.name,
-        language: 'External',
-        isDefault: true,
-      };
-      setSubtitleTracks((prev) => [newTrack, ...prev.filter((t) => !t.id.startsWith('ext-'))]);
-      setSelectedSubtitleTrack(newTrack.id);
-      return;
-    }
-
-    // 2. If user drops a video file with accessible OS file path
-    const filePath = (file as unknown as { path?: string }).path;
-    if (filePath) {
-      await handleOpenFilePath(filePath);
-      return;
-    }
-
-    // 3. Fallback for browser drag-drop
-    const url = URL.createObjectURL(file);
-    setVideoSrc(url);
-    setTitle(file.name.replace(/\.[^/.]+$/, ''));
-    showOsd(`Playing: ${file.name}`);
-    setAudioTracks([{ id: 'default', title: 'Primary Audio (Stereo / 5.1)', isDefault: true }]);
-    setSelectedAudioTrack('default');
-    if (videoRef.current) {
-      videoRef.current.src = url;
-      videoRef.current.play().catch(() => {});
-    }
-  };
+  const pictureHeight = aspectRatio ? Math.min(size.height, size.width / aspectRatio) : size.height;
+  const subtitleTop = Math.min(size.height - 8, (size.height - pictureHeight) / 2 + pictureHeight * subtitleConfig.vertical_position / 100);
+  const subtitle = cueText(currentTime - subtitleConfig.delay_seconds) || (drawer === 'subtitles' ? 'Subtitle preview' : '');
+  const toggleDrawer = (panel: DrawerPanel) => setDrawer((active) => active === panel ? 'none' : panel);
+  const dismissDrawer = () => setDrawer('none');
 
   return (
-    <div
-      onMouseMove={bumpHud}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-      className={`relative w-screen h-screen bg-black text-white overflow-hidden flex flex-col select-none ${
-        !hudVisible && Boolean(videoSrc) && drawer === 'none' && !settingsOpen && !contextMenu ? 'cursor-none' : ''
-      }`}
-    >
-      {/* 1. Custom Minimalist Frameless Top Window Bar */}
-      <TopWindowBar
-        title={title}
-        visible={hudVisible || !videoSrc || drawer !== 'none'}
-        onOpenSettings={() => setSettingsOpen(true)}
-      />
-
-      {/* 2. Main Viewport & Ambient Background */}
-      <div className="relative flex-1 flex overflow-hidden">
-        <main
-          onClick={() => {
-            if (contextMenu) setContextMenu(null);
-            if (drawer !== 'none') setDrawer('none');
-          }}
-          onDoubleClick={toggleFullscreen}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            setContextMenu({ x: e.clientX, y: e.clientY });
-          }}
-          className="relative flex-1 flex items-center justify-center bg-black overflow-hidden"
-        >
-          {/* Video Element with Autoplay */}
-          {videoSrc ? (
-            videoSrc === 'sample://preview' ? (
-              <img
-                src="/sample_frame.jpg"
-                alt="Sample Video Playback"
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <video
-                ref={videoRef}
-                src={videoSrc}
-                autoPlay
-                loop={loop}
-                onPlay={() => {
-                  setPlaying(true);
-                  bumpHud();
-                }}
-                onPause={() => setPlaying(false)}
-                onLoadedMetadata={(e) => {
-                  setDuration(e.currentTarget.duration);
-                  detectTracks();
-                  e.currentTarget.play().catch(() => {});
-                }}
-                onCanPlay={(e) => {
-                  e.currentTarget.play().catch(() => {});
-                }}
-                className="w-full h-full object-contain"
-              />
-            )
-          ) : (
-            /* Minimalist Sharp Empty State (Right-Angled, Clean, No Bloat) */
-            <div className="relative z-10 flex flex-col items-center justify-center text-center p-6 max-w-sm animate-in fade-in duration-200">
-              <div
-                className="w-12 h-12 bg-white/[0.05] border border-white/10 flex items-center justify-center mb-4 group cursor-pointer hover:border-amber-400 transition"
-                onClick={handleOpenFile}
-              >
-                <Play size={18} className="fill-amber-400 text-amber-400 ml-0.5" />
-              </div>
-
-              <h2 className="text-xs font-semibold tracking-wider uppercase text-zinc-200 mb-1">
-                No Media Loaded
-              </h2>
-              <p className="text-[11px] text-zinc-500 mb-5 leading-normal">
-                Drop any video file here or select one from disk
-              </p>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleOpenFile}
-                  className="px-3.5 py-1.5 bg-white text-zinc-950 font-medium text-xs flex items-center gap-1.5 hover:bg-zinc-200 transition"
-                >
-                  <FolderOpen size={13} className="text-zinc-950" />
-                  <span>Open Video</span>
-                </button>
-
-                <button
-                  onClick={() => setDrawer('playlist')}
-                  className="px-3 py-1.5 bg-white/[0.06] hover:bg-white/[0.12] text-zinc-300 text-xs font-medium flex items-center gap-1.5 transition border border-white/[0.08]"
-                >
-                  <ListMusic size={13} />
-                  <span>Queue</span>
-                </button>
-              </div>
-
-              <div className="mt-6 pt-3 border-t border-white/[0.06] flex items-center gap-2 text-[10px] text-zinc-500 font-mono">
-                <span>Space: Play</span>
-                <span>•</span>
-                <span>←/→: Seek</span>
-                <span>•</span>
-                <span>Right-Click: Menu</span>
-              </div>
-            </div>
-          )}
-
-          {/* Drag Overlay Hint */}
-          {isDraggingFile && (
-            <div className="absolute inset-2 border border-dashed border-amber-400/80 bg-black/80 flex flex-col items-center justify-center gap-2 z-50 pointer-events-none animate-in fade-in">
-              <Film size={28} className="text-amber-400" />
-              <div className="text-xs font-medium text-amber-400 uppercase tracking-wider">Drop video to play</div>
-            </div>
-          )}
-
-          {/* OSD Toast Notification */}
-          <OsdOverlay message={osdMessage} />
-
-          {/* Framed Subtitle Display */}
-          {(activeCueText || drawer === 'subtitles') && (
-            <div
-              style={{
-                top: `${Math.min(Math.max(subConfig.vertical_position, 10), 96)}%`,
-                transform: 'translateY(-100%)',
-                fontSize: `${subConfig.font_size}px`,
-                backgroundColor: `rgba(0, 0, 0, ${subConfig.background_opacity})`,
+    <div ref={rootRef} className={['player-shell', fullscreen && 'is-fullscreen', hudHidden && 'hud-hidden'].filter(Boolean).join(' ')}
+      onPointerMove={showControls} onPointerDown={showControls} onPointerLeave={showControls}
+      onFocus={showControls} onBlur={showControls}
+      onDragOver={(event) => {
+        if (!isDesktop && event.dataTransfer.types.includes('Files')) {
+          event.preventDefault();
+          if (!dragging) setDragging(true);
+        }
+      }}
+      onDragLeave={(event) => {
+        if (!isDesktop && !event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false);
+      }}
+      onDrop={dropFiles}>
+      <TopWindowBar title={media?.title ?? ''} onOpenSettings={() => setSettingsOpen(true)} />
+      <div className="player-frame">
+        <div className="player-body">
+          <main ref={viewportRef} aria-label="Video viewport"
+            className="viewport"
+            onDoubleClick={(event) => { if (!(event.target as Element).closest('button')) void changeFullscreen(!fullscreen); }}
+            onClick={(event) => {
+              if (media && !error && event.detail === 1 && !(event.target as Element).closest('button')) {
+                if (drawer !== 'none') dismissDrawer();
+                else togglePlay();
+              }
+            }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              setMenu({ x: event.clientX, y: event.clientY });
+            }}>
+            <video ref={videoRef} src={sample ? undefined : media?.uri} hidden={!media || Boolean(sample) || Boolean(error)}
+              preload="auto" playsInline loop={loop} crossOrigin="anonymous"
+              onLoadedMetadata={(event) => {
+                const video = event.currentTarget;
+                const length = Number.isFinite(video.duration) ? video.duration : 0;
+                setDuration(length);
+                video.playbackRate = speed;
+                if (video.videoHeight) setAspectRatio(video.videoWidth / video.videoHeight);
+                const saved = settings.autoResume && media?.path ? savedPositions.get(media.path) : undefined;
+                if (saved && saved < length - 0.5) {
+                  video.currentTime = saved;
+                  setCurrentTime(saved);
+                }
+                updateTracks();
+                playVideo();
               }}
-              className="absolute px-4 py-1.5 text-center whitespace-pre-line pointer-events-none border border-white/10 shadow-2xl transition-all duration-75 text-zinc-100 font-medium tracking-wide max-w-2xl"
-            >
-              {activeCueText || 'Subtitle Framing Preview — Drag slider to adjust'}
-            </div>
-          )}
-
-          {/* Custom Right-Click Context Menu */}
-          {contextMenu && (
-            <PlayerContextMenu
-              x={contextMenu.x}
-              y={contextMenu.y}
-              onClose={() => setContextMenu(null)}
-              playing={playing}
-              onTogglePlay={() => {
-                if (!videoRef.current) return;
-                videoRef.current.paused ? videoRef.current.play() : videoRef.current.pause();
+              onDurationChange={(event) => {
+                const length = event.currentTarget.duration;
+                if (media && !sample && Number.isFinite(length)) setDuration(length);
               }}
-              onSeekDelta={handleSeekDelta}
-              onOpenFile={handleOpenFile}
-              onOpenDrawer={(panel) => setDrawer(panel)}
-              onOpenSettings={() => setSettingsOpen(true)}
-              onToggleFullscreen={toggleFullscreen}
-              isFullScreen={isFullScreen}
-              speed={speed}
-              onSetSpeed={handleSetSpeed}
-              loop={loop}
-              onToggleLoop={() => {
-                setLoop((prev) => !prev);
-                showOsd(!loop ? 'Loop: ON' : 'Loop: OFF');
-              }}
-              onTakeScreenshot={handleTakeScreenshot}
-              onCloseMedia={handleCloseMedia}
-              volume={volume}
-              onToggleMute={() => {
-                if (volume > 0) {
-                  setVolume(0);
-                  if (videoRef.current) videoRef.current.volume = 0;
-                  showOsd('Muted');
-                } else {
-                  setVolume(100);
-                  if (videoRef.current) videoRef.current.volume = 1;
-                  showOsd('Volume: 100%');
+              onLoadedData={({ currentTarget }) => setCanSnapshot(currentTarget.videoWidth > 0)}
+              onPlaying={() => { setPlaying(true); setLoading(false); }}
+              onCanPlay={() => setLoading(false)}
+              onWaiting={({ currentTarget }) => { if (!currentTarget.paused) setLoading(true); }}
+              onPause={() => { setPlaying(false); savePosition(); }}
+              onTimeUpdate={({ currentTarget }) => {
+                setCurrentTime(currentTarget.currentTime);
+                if (performance.now() - resumeClock.current > 2000) {
+                  resumeClock.current = performance.now();
+                  savePosition();
                 }
               }}
-              hasMedia={Boolean(videoSrc)}
-              audioTracks={audioTracks}
-              selectedAudioTrack={selectedAudioTrack}
-              onSelectAudioTrack={handleSelectAudioTrack}
-              subtitleTracks={subtitleTracks}
-              selectedSubtitleTrack={selectedSubtitleTrack}
-              onSelectSubtitleTrack={handleSelectSubtitleTrack}
+              onEnded={() => {
+                setPlaying(false);
+                savePosition();
+                if (next) selectMedia(next);
+              }}
+              onError={() => {
+                if (!media || sample) return;
+                setPlaying(false);
+                setLoading(false);
+                setCanSnapshot(false);
+                setDuration(0);
+                setError('This file is unreadable or uses a codec your player cannot decode.');
+              }}
             />
-          )}
-        </main>
+            {sample && <img className="sample-frame" src={media?.uri} alt="Sample playback still" />}
+            {(!media || error) && (
+              <div className="empty-state">
+                {error && <h1>Unable to play this file</h1>}
+                <div className="error-actions">
+                  <button className="secondary-button" type="button" onClick={() => void openFile()}>
+                    <FolderOpen size={14} />{error ? 'Open another file' : 'Open video'}
+                  </button>
+                  {error && <button className="secondary-button" type="button" onClick={() => selectMedia(null)}>Close media</button>}
+                </div>
+                <p>{error ?? 'Or drop a file here'}</p>
+              </div>
+            )}
+            {media && !sample && !error && !loading && aspectRatio === 0 &&
+              <div className="media-placeholder"><FileVideo size={25} /></div>}
+            {loading && !error && <div className="loading-mark" role="status"><LoaderCircle size={21} /> Loading media</div>}
+            {subtitle && !error && <div className="subtitle-overlay" style={{
+              fontSize: subtitleConfig.font_size,
+              background: 'rgba(0, 0, 0, ' + subtitleConfig.background_opacity + ')',
+              top: hasTransport && !hudHidden ? Math.min(subtitleTop, size.height - 53) : subtitleTop,
+            }}>{subtitle}</div>}
+            {dragging && <div className="drop-overlay"><FileVideo size={24} /> {drawer === 'playlist' ? 'Drop files to add to queue' : 'Drop files to open'}</div>}
+            <OsdOverlay message={status} />
+          </main>
 
-        {/* 3. Slide-Out Modern Feature Drawers */}
-        {drawer === 'playlist' && (
-          <PlaylistPanel
-            items={playlist}
-            currentIndex={playlistIndex}
-            onSelect={(idx) => {
-              setPlaylistIndex(idx);
-              const item = playlist[idx];
-              if (item) {
-                if (item.id && !item.id.startsWith('blob:') && !item.id.startsWith('http')) {
-                  handleOpenFilePath(item.id);
-                } else {
-                  setVideoSrc(item.uri);
-                  setTitle(item.title);
-                  showOsd(`Playing: ${item.title}`);
-                  if (videoRef.current) {
-                    videoRef.current.src = item.uri;
-                    videoRef.current.play().catch(() => {});
-                  }
-                }
-              }
-            }}
-            onRemove={(idx) => {
-              setPlaylist((prev) => prev.filter((_, i) => i !== idx));
-              if (playlistIndex === idx) {
-                setVideoSrc('');
-                setTitle('MyPlayer Pro');
-              }
-            }}
-            onClear={() => {
-              setPlaylist([]);
-              setPlaylistIndex(-1);
-              setVideoSrc('');
-              setTitle('MyPlayer Pro');
-            }}
-            onAddFiles={handleOpenFile}
-            onClose={() => setDrawer('none')}
-          />
-        )}
+          {drawer === 'playlist' && <PlaylistPanel items={playlist} activeId={media?.id} onSelect={selectMedia} onRemove={removeItem}
+            onMove={moveItem} onAdd={() => void openFile(true)} onClose={dismissDrawer}
+            onClear={() => { selectMedia(null); playlist.forEach(forgetItem); setPlaylist([]); }} />}
+          {drawer === 'audio' && <EqualizerPanel eq={eq} presets={presets} audioTracks={audioTracks} selectedTrack={selectedAudio}
+            onSelectTrack={selectAudio} onChange={(value) => { prepareAudio(); setEq(value); }}
+            onReset={() => setEq(INITIAL_EQ)} onClose={dismissDrawer} />}
+          {drawer === 'subtitles' && <SubtitlePanel config={subtitleConfig} tracks={subtitleTracks} selected={selectedSubtitle}
+            hasMedia={Boolean(media && !error)} onSelect={selectSubtitle} onChange={setSubtitleConfig} onReset={() => setSubtitleConfig(INITIAL_SUB)}
+            onLoad={() => void openSubtitle()} onClose={dismissDrawer} />}
+        </div>
 
-        {drawer === 'audio' && (
-          <EqualizerPanel
-            eq={eq}
-            presets={presets}
-            afFilterPreview={afString}
-            audioTracks={audioTracks}
-            selectedAudioTrackId={selectedAudioTrack}
-            onSelectAudioTrack={handleSelectAudioTrack}
-            onChange={handleEqChange}
-            onReset={() => handleEqChange(INITIAL_EQ, 'Equalizer Reset')}
-          />
-        )}
-
-        {drawer === 'subtitles' && (
-          <SubtitlePanel
-            config={subConfig}
-            subtitleTracks={subtitleTracks}
-            selectedSubtitleTrackId={selectedSubtitleTrack}
-            onSelectSubtitleTrack={handleSelectSubtitleTrack}
-            onChange={handleSubChange}
-            onLoadSrtFile={handleLoadSrt}
-          />
-        )}
+        {hasTransport && <BottomControlsBar currentTime={currentTime} duration={duration} playing={playing} canPlay={Boolean(media && !error)}
+          volume={volume} drawer={drawer} isFullScreen={fullscreen} seekStep={settings.seekStep} hasPrevious={Boolean(previous)} hasNext={Boolean(next)}
+          menuOpen={Boolean(menu?.trigger)} onSeek={seek} onSeekDelta={seekBy} onTogglePlay={togglePlay} onVolumeChange={changeVolume}
+          onToggleMute={mute} onPrevious={() => previous && selectMedia(previous)} onNext={() => next && selectMedia(next)}
+          onToggleDrawer={toggleDrawer} onToggleFullscreen={() => void changeFullscreen(!fullscreen)} onOpenMenu={openMenu} />}
       </div>
-
-      {/* 4. Sleek Right-Angled Vertically Small Bottom Controls */}
-      <BottomControlsBar
-        currentTime={currentTime}
-        duration={duration}
-        playing={playing}
-        volume={volume}
-        drawer={drawer}
-        hudVisible={hudVisible || !videoSrc || drawer !== 'none'}
-        isFullScreen={isFullScreen}
-        onSeek={(t) => {
-          setCurrentTime(t);
-          if (videoRef.current) videoRef.current.currentTime = t;
+      {menu && <PlayerContextMenu anchor={menu} onClose={closeMenu} hasMedia={Boolean(media)} canSnapshot={canSnapshot}
+        playing={playing} fullscreen={fullscreen} speed={speed} loop={loop} audioTracks={audioTracks}
+        selectedAudio={selectedAudio} onSelectAudio={selectAudio} subtitleTracks={subtitleTracks}
+        selectedSubtitle={selectedSubtitle} onSelectSubtitle={selectSubtitle} onPlay={togglePlay} onOpen={() => void openFile()}
+        onDrawer={setDrawer} onSettings={() => setSettingsOpen(true)} onFullscreen={() => void changeFullscreen(!fullscreen)}
+        onSpeed={(value) => { setSpeed(value); if (videoRef.current) videoRef.current.playbackRate = value; }}
+        onLoop={() => { setLoop(!loop); showStatus(loop ? 'Loop off' : 'Loop on'); }}
+        onSnapshot={() => void saveFrame()} onCloseMedia={() => selectMedia(null)} />}
+      {settingsOpen && <PlaybackSettingsModal settings={settings} hardwareDecoding={hardwareDecoding}
+        onHardwareDecoding={async (value) => {
+          try { await tauriClient.setHardwareDecoding(value); setHardwareDecoding(value); }
+          catch { showStatus('Could not save the hardware decoding preference'); }
         }}
-        onSeekDelta={handleSeekDelta}
-        onTogglePlay={() => {
-          if (!videoRef.current) return;
-          videoRef.current.paused ? videoRef.current.play() : videoRef.current.pause();
-        }}
-        onVolumeChange={(v) => {
-          setVolume(v);
-          if (videoRef.current) videoRef.current.volume = Math.min(v / 100, 1);
-          showOsd(`Volume: ${v}%`);
-        }}
-        onOpenFile={handleOpenFile}
-        onToggleDrawer={(panel) => setDrawer(drawer === panel ? 'none' : panel)}
-        onToggleFullscreen={toggleFullscreen}
-        formatTime={formatTime}
-      />
-
-      {/* 5. Minimal Playback & Hardware Settings Modal */}
-      <PlaybackSettingsModal
-        visible={settingsOpen}
-        hardwareDecoding={hardwareDecoding}
-        autoResume={autoResume}
-        seekStepSeconds={seekStepSeconds}
-        volumeStepPercent={volumeStepPercent}
-        precisionSeeking={precisionSeeking}
-        onUpdateHardwareDecoding={(val) => {
-          setHardwareDecoding(val);
-          tauriClient.syncPlaybackSettings(val, autoResume);
-          showOsd(`Hardware Decoding: ${val ? 'ON' : 'OFF'}`);
-        }}
-        onUpdateAutoResume={(val) => {
-          setAutoResume(val);
-          tauriClient.syncPlaybackSettings(hardwareDecoding, val);
-          showOsd(`Auto-Resume: ${val ? 'ON' : 'OFF'}`);
-        }}
-        onUpdateSeekStep={(val) => {
-          setSeekStepSeconds(val);
-          showOsd(`Seek Step: ${val}s`);
-        }}
-        onUpdateVolumeStep={(val) => {
-          setVolumeStepPercent(val);
-          showOsd(`Volume Step: ${val}%`);
-        }}
-        onUpdatePrecisionSeeking={(val) => {
-          setPrecisionSeeking(val);
-          showOsd(`Precision Seek: ${val ? 'ON' : 'OFF'}`);
-        }}
-        onClose={() => setSettingsOpen(false)}
-      />
+        onChange={(value) => { setSettings(value); writeStorage(settingsKey, value); }} onClose={() => setSettingsOpen(false)} />}
+      {!isDesktop && <>
+        <input type="file" ref={mediaInput} hidden multiple accept={MEDIA_ACCEPT} onChange={(event) => {
+          openItems(Array.from(event.currentTarget.files ?? [], createBrowserMedia), addOnly.current);
+          event.currentTarget.value = '';
+        }} />
+        <input type="file" ref={subtitleInput} hidden accept={SUBTITLE_ACCEPT} onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          const generation = mediaGeneration.current;
+          if (file) void loadSubtitles(file.name, () => file.text(), () => mediaGeneration.current === generation);
+          event.currentTarget.value = '';
+        }} />
+      </>}
     </div>
   );
-};
+}
