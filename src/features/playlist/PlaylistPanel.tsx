@@ -28,7 +28,7 @@ export function PlaylistPanel({ items, activeId, onSelect, onRemove, onMove, onC
     }>
       {items.length === 0 ? (
         <div className="queue-empty">
-          <p className="help-text">Videos you open will appear here.</p>
+          <p className="help-text">Media you open will appear here.</p>
           <button type="button" className="secondary-button" onClick={onAdd}><Plus size={14} /> Add files</button>
         </div>
       ) : (

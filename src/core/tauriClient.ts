@@ -1,7 +1,7 @@
 import { invoke, convertFileSrc, isTauri } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
-import type { EqPreset, PlaylistItem, SubtitleCue, TrackInfo } from './types';
+import type { EqPreset, EqState, PlaylistItem, SubtitleCue, TrackInfo } from './types';
 
 export const isDesktop = isTauri();
 export const videoExtensions = ['mp4', 'm4v', 'mkv', 'webm', 'mov', 'avi', 'ogv', 'flac', 'mp3', 'm4a', 'wav', 'ogg', 'opus'];
@@ -12,6 +12,19 @@ export function isSubtitleFile(path: string) {
 }
 
 export const tauriClient = {
+  getLaunchFiles(): Promise<string[]> {
+    return invoke<string[]>('get_launch_files');
+  },
+
+  syncNativeAudio(path: string, position: number, playing: boolean, volume: number, eq: EqState) {
+    return invoke<{ ready: boolean; codec?: string; position?: number; error?: string }>('sync_native_audio',
+      { path, position, playing, volume, eq });
+  },
+
+  stopNativeAudio(path: string) {
+    return invoke<void>('stop_native_audio', { path });
+  },
+
   async pickMedia(): Promise<string[]> {
     const selected = await open({ multiple: true, filters: [{ name: 'Media', extensions: videoExtensions }] });
     return Array.isArray(selected) ? selected : selected ? [selected] : [];
@@ -26,7 +39,7 @@ export const tauriClient = {
       id: path,
       path,
       uri: convertFileSrc(path),
-      title: path.split(/[\\/]/).pop()?.replace(/\.[^/.]+$/, '') || 'Untitled video',
+      title: path.split(/[\\/]/).pop()?.replace(/\.[^/.]+$/, '') || 'Untitled media',
     };
   },
 

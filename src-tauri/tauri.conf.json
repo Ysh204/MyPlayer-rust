@@ -33,6 +33,7 @@
   },
   "bundle": {
     "active": true,
+    "resources": ["bin/libmpv-2.dll", "bin/README.md", "bin/LICENSE.LGPL"],
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -51,7 +52,8 @@
       "digestAlgorithm": "sha256",
       "timestampUrl": "",
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerHooks": "windows/media-associations.nsh"
       }
     }
   }

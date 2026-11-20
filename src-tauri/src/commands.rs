@@ -8,6 +8,30 @@ use crate::data::models::subtitle_style::SubtitleConfig;
 use crate::services::audio_filter_builder::build_audio_filter;
 use crate::services::media_inspector::{extract_embedded_subtitles, inspect_media_file, MediaTrack, SubtitleCueItem};
 use crate::services::player_service::PlayerService;
+use crate::services::native_audio::{AudioSync, NativeAudioBridge, NativeAudioStatus};
+
+#[tauri::command]
+pub fn get_launch_files() -> Vec<String> {
+    std::env::args_os()
+        .skip(1)
+        .filter_map(|argument| std::path::absolute(argument).ok())
+        .filter(|path| path.is_file())
+        .filter_map(|path| path.into_os_string().into_string().ok())
+        .collect()
+}
+
+#[tauri::command]
+pub fn sync_native_audio(
+    bridge: State<'_, NativeAudioBridge>, path: String, position: f64,
+    playing: bool, volume: f64, eq: EqState,
+) -> Result<NativeAudioStatus, String> {
+    bridge.sync(AudioSync { path, position, playing, volume, eq })
+}
+
+#[tauri::command]
+pub fn stop_native_audio(bridge: State<'_, NativeAudioBridge>, path: String) {
+    bridge.stop(path);
+}
 
 pub struct AppState {
     pub player: PlayerService,
