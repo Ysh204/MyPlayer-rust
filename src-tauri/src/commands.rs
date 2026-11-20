@@ -73,24 +73,60 @@ pub fn open_media_file_fast(state: State<'_, Mutex<AppState>>, path: String) -> 
 /// Background inspection: parses container headers + sidecars (can be slow) — call
 /// *after* the video element has already started playing.
 #[tauri::command]
-pub fn inspect_media_tracks(path: String) -> MediaOpenResponse {
-    let inspected = inspect_media_file(&path);
-    MediaOpenResponse {
-        clean_title: clean_media_title(&path),
-        raw_path: path,
-        audio_tracks: inspected.audio_tracks,
-        subtitle_tracks: inspected.subtitle_tracks,
-    }
+pub async fn inspect_media_tracks(path: String) -> Result<MediaOpenResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let inspected = inspect_media_file(&path);
+        MediaOpenResponse {
+            clean_title: clean_media_title(&path),
+            raw_path: path,
+            audio_tracks: inspected.audio_tracks,
+            subtitle_tracks: inspected.subtitle_tracks,
+        }
+    }).await.map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub fn load_subtitle_file(path: String) -> Result<String, String> {
-    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+    if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
+        let units = bytes[2..].chunks_exact(2).map(|pair| {
+            if bytes[0] == 0xff { u16::from_le_bytes([pair[0], pair[1]]) }
+            else { u16::from_be_bytes([pair[0], pair[1]]) }
+        }).collect::<Vec<_>>();
+        return String::from_utf16(&units).map_err(|error| error.to_string());
+    }
+    String::from_utf8(bytes).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub fn extract_subtitles_for_track(path: String, track_num: u64) -> Vec<SubtitleCueItem> {
-    extract_embedded_subtitles(&path, track_num)
+pub async fn extract_subtitles_for_track(path: String, track_num: u64) -> Result<Vec<SubtitleCueItem>, String> {
+    tauri::async_runtime::spawn_blocking(move || extract_embedded_subtitles(&path, track_num))
+        .await.map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn get_hardware_decoding(state: State<'_, Mutex<AppState>>) -> Option<bool> {
+    cfg!(windows).then(|| state.lock().unwrap().hardware_decoding)
+}
+
+#[tauri::command]
+pub fn set_hardware_decoding(app: tauri::AppHandle, state: State<'_, Mutex<AppState>>, enabled: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let path = crate::hardware_preference_path(&app).map_err(|error| error.to_string())?;
+        let mut app_state = state.lock().unwrap();
+        if let Some(directory) = path.parent() {
+            std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(&path, if enabled { "on" } else { "off" }).map_err(|error| error.to_string())?;
+        app_state.hardware_decoding = enabled;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, state, enabled);
+        Err("Hardware decoding is managed by the system renderer".into())
+    }
 }
 
 #[tauri::command]

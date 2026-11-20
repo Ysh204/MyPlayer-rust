@@ -31,6 +31,7 @@ export interface PlaylistItem {
   id: string;
   uri: string;
   title: string;
+  path?: string;
 }
 
 export interface TrackInfo {
@@ -43,4 +44,3 @@ export interface TrackInfo {
 }
 
 export type DrawerPanel = 'none' | 'audio' | 'subtitles' | 'playlist';
-

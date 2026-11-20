@@ -132,7 +132,8 @@ pub fn inspect_media_file(file_path: &str) -> MediaTracksResult {
                             file_path: None,
                         });
                     }
-                    matroska::Tracktype::Subtitle => {
+                    matroska::Tracktype::Subtitle
+                        if track.codec_id.starts_with("S_TEXT/") || track.codec_id.starts_with("D_WEBVTT/") => {
                         let title = if let Some(ref name) = track.name {
                             if !name.trim().is_empty() {
                                 name.trim().to_string()
@@ -254,15 +255,19 @@ pub fn extract_embedded_subtitles(file_path: &str, target_track: u64) -> Vec<Sub
     };
 
     let mut frame = Frame::default();
+    let timestamp_seconds = mkv.info().timestamp_scale().get() as f64 / 1_000_000_000.0;
+    let is_ass = mkv.tracks().iter().any(|track| {
+        track.track_number().get() == target_track && matches!(track.codec_id(), "S_TEXT/ASS" | "S_TEXT/SSA")
+    });
     while let Ok(true) = mkv.next_frame(&mut frame) {
         if frame.track == target_track {
             if let Ok(text) = std::str::from_utf8(&frame.data) {
-                let clean_text = clean_subtitle_payload(text);
+                let clean_text = clean_subtitle_payload(text, is_ass);
                 if !clean_text.is_empty() {
-                    let start = frame.timestamp as f64 / 1_000_000_000.0;
+                    let start = frame.timestamp as f64 * timestamp_seconds;
                     cues.push(SubtitleCueItem {
                         start,
-                        end: start + 3.5,
+                        end: start + frame.duration.map(|duration| duration as f64 * timestamp_seconds).unwrap_or(0.0),
                         text: clean_text,
                     });
                 }
@@ -270,40 +275,23 @@ pub fn extract_embedded_subtitles(file_path: &str, target_track: u64) -> Vec<Sub
         }
     }
 
-    // Adjust end timestamps so each cue doesn't overlap the next
+    cues.sort_by(|first, second| first.start.total_cmp(&second.start));
     for i in 0..cues.len() {
-        let max_end = cues[i].start + 5.0;
-        if i + 1 < cues.len() {
-            let next_start = cues[i + 1].start;
-            if next_start > cues[i].start && next_start < max_end {
-                cues[i].end = next_start;
-            } else {
-                cues[i].end = max_end;
-            }
-        } else {
-            cues[i].end = max_end;
+        if cues[i].end <= cues[i].start {
+            let fallback = cues[i].start + 3.5;
+            cues[i].end = cues.get(i + 1).filter(|next| next.start > cues[i].start)
+                .map_or(fallback, |next| fallback.min(next.start));
         }
     }
 
     cues
 }
 
-fn clean_subtitle_payload(raw: &str) -> String {
+fn clean_subtitle_payload(raw: &str, is_ass: bool) -> String {
     let s = raw.trim();
     if s.is_empty() {
         return String::new();
     }
-    // If ASS dialogue line: e.g. "Dialogue: 0,0:01:23.45,0:01:25.67,Default,,0,0,0,,Hello world"
-    let text = if let Some(idx) = s.rfind(",,") {
-        &s[idx + 2..]
-    } else {
-        s
-    };
-    // Strip ASS inline styling tags like {\an8}, {\i1}, {\b1}, {\c&H...&}
-    if let Ok(re_tags) = regex::Regex::new(r"\{[^}]*\}") {
-        let stripped = re_tags.replace_all(text, "");
-        stripped.replace("\\N", "\n").replace("\\n", "\n").trim().to_string()
-    } else {
-        text.replace("\\N", "\n").replace("\\n", "\n").trim().to_string()
-    }
+    // Matroska omits ASS dialogue start and end fields from the packet payload.
+    if is_ass { s.splitn(9, ',').nth(8).unwrap_or(s).trim().to_string() } else { s.to_string() }
 }
