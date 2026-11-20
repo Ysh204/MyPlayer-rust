@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DragEvent, MouseEvent } from 'react';
-import { FileVideo, FolderOpen, LoaderCircle } from 'lucide-react';
+import { FileVideo, FolderOpen, LoaderCircle, Music2 } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { isDesktop, isSubtitleFile, subtitleExtensions, tauriClient, videoExtensions } from '../../core/tauriClient';
 import { readStorage, savedPositions, settingsKey, writeStorage } from '../../core/playbackStorage';
@@ -28,6 +28,12 @@ const INITIAL_SUB: SubtitleConfig = {
 const INITIAL_SETTINGS: PlaybackSettings = { autoResume: true, seekStep: 5, volumeStep: 5, precisionSeeking: true };
 const MEDIA_ACCEPT = videoExtensions.map((extension) => '.' + extension).join(',');
 const SUBTITLE_ACCEPT = subtitleExtensions.map((extension) => '.' + extension).join(',');
+const nativeAudioCodecs: Record<string, string> = {
+  A_EAC3: 'audio/mp4; codecs="ec-3"',
+  A_AC3: 'audio/mp4; codecs="ac-3"',
+  A_DTS: 'audio/mp4; codecs="dtsc"',
+  A_TRUEHD: 'audio/mp4; codecs="mlpa"',
+};
 const SAMPLE: PlaylistItem[] = ['Are You Happy in Your Life', 'Trip of a Lifetime', 'The Box', 'The Corridor']
   .map((title, index) => ({ id: 'sample-' + index, uri: '/sample_frame.jpg', title: 'Dark Matter · ' + title }));
 const preview = isDesktop ? new URLSearchParams() : new URLSearchParams(location.search);
@@ -75,6 +81,8 @@ export function PlayerScreen() {
   const inspectedAudio = useRef<TrackInfo[]>([]);
   const [audioTracks, setAudioTracks] = useState<TrackInfo[]>([]);
   const [selectedAudio, setSelectedAudio] = useState('');
+  const [nativeAudioPath, setNativeAudioPath] = useState<string | null>(null);
+  const nativeAudioErrorShown = useRef(false);
   const [subtitleConfig, setSubtitleConfig] = useState(INITIAL_SUB);
 
   const showStatus = useCallback((message: string) => {
@@ -84,7 +92,8 @@ export function PlayerScreen() {
   }, []);
   const { tracks: subtitleTracks, selected: selectedSubtitle, reset: resetSubtitles, register: registerSubtitles,
     load: loadSubtitles, select: selectSubtitle, cueText } = usePlayerSubtitles(videoRef, showStatus);
-  const prepareAudio = usePlayerAudio(videoRef, eq, volume);
+  const nativeAudio = Boolean(media?.path && nativeAudioPath === media.path);
+  const prepareAudio = usePlayerAudio(videoRef, eq, volume, nativeAudio);
 
   const sample = isSample(media);
   const index = playlist.findIndex(({ id }) => id === media?.id);
@@ -162,15 +171,50 @@ export function PlayerScreen() {
 
   useEffect(() => {
     if (!media?.path) return;
+    const path = media.path;
     let active = true;
-    void tauriClient.inspectMedia(media.path).then((tracks) => {
+    void tauriClient.inspectMedia(path).then((tracks) => {
       if (!active) return;
       inspectedAudio.current = tracks.audioTracks;
       updateTracks();
       registerSubtitles(tracks.subtitleTracks);
+      const audioCodec = tracks.audioTracks.find((track) => track.isDefault)?.codec ?? tracks.audioTracks[0]?.codec;
+      if (audioCodec && nativeAudioCodecs[audioCodec] &&
+        !videoRef.current?.canPlayType(nativeAudioCodecs[audioCodec])) {
+        setNativeAudioPath(path);
+      }
     }).catch(() => {});
     return () => { active = false; };
   }, [media, registerSubtitles, updateTracks]);
+
+  useEffect(() => {
+    if (!nativeAudioPath) return;
+    return () => { void tauriClient.stopNativeAudio(nativeAudioPath); };
+  }, [nativeAudioPath]);
+
+  useEffect(() => {
+    if (!nativeAudio || !media?.path) return;
+    const path = media.path;
+    const sync = () => {
+      const video = videoRef.current;
+      const position = video?.currentTime ?? 0;
+      const audioPlaying = Boolean(playing && video && !video.paused && !video.seeking && !loading);
+      void tauriClient.syncNativeAudio(path, position, audioPlaying, volume, eq).then((state) => {
+        if (state.error && !nativeAudioErrorShown.current) {
+          nativeAudioErrorShown.current = true;
+          showStatus(state.error);
+        }
+      }).catch((reason) => {
+        if (!nativeAudioErrorShown.current) {
+          nativeAudioErrorShown.current = true;
+          showStatus(String(reason));
+        }
+      });
+    };
+    sync();
+    const timer = window.setInterval(sync, 250);
+    return () => window.clearInterval(timer);
+  }, [media?.path, nativeAudio, playing, loading, volume, eq, showStatus]);
 
   const savePosition = useCallback(() => {
     const video = videoRef.current;
@@ -199,6 +243,8 @@ export function PlayerScreen() {
     videoRef.current?.pause();
     resetSubtitles(item?.path);
     inspectedAudio.current = [];
+    setNativeAudioPath(null);
+    nativeAudioErrorShown.current = false;
     setAudioTracks([]);
     setSelectedAudio('');
     setCurrentTime(0);
@@ -274,6 +320,9 @@ export function PlayerScreen() {
     if (!isDesktop) return;
     let disposed = false;
     let unlisten: (() => void) | undefined;
+    void tauriClient.getLaunchFiles().then((paths) => {
+      if (!disposed && paths.length) nativeDrop.current(paths);
+    }).catch(() => {});
     void getCurrentWindow().onDragDropEvent(({ payload }) => {
       if (payload.type === 'enter') setDragging(true);
       if (payload.type === 'leave' || payload.type === 'drop') setDragging(false);
@@ -513,6 +562,7 @@ export function PlayerScreen() {
               setMenu({ x: event.clientX, y: event.clientY });
             }}>
             <video ref={videoRef} src={sample ? undefined : media?.uri} hidden={!media || Boolean(sample) || Boolean(error)}
+              muted={nativeAudio}
               preload="auto" playsInline loop={loop} crossOrigin="anonymous"
               onLoadedMetadata={(event) => {
                 const video = event.currentTarget;
@@ -564,7 +614,7 @@ export function PlayerScreen() {
                 {error && <h1>Unable to play this file</h1>}
                 <div className="error-actions">
                   <button className="primary-button" type="button" onClick={() => void openFile()}>
-                    <FolderOpen size={14} />{error ? 'Open another file' : 'Open video'}
+                    <FolderOpen size={14} />{error ? 'Open another file' : 'Open file'}
                   </button>
                   {error && <button className="secondary-button" type="button" onClick={() => selectMedia(null)}>Close media</button>}
                 </div>
@@ -572,7 +622,7 @@ export function PlayerScreen() {
               </div>
             )}
             {media && !sample && !error && !loading && aspectRatio === 0 &&
-              <div className="media-placeholder"><FileVideo size={25} /></div>}
+              <div className="media-placeholder"><Music2 size={25} /></div>}
             {loading && !error && <div className="loading-mark" role="status"><LoaderCircle size={21} /> Loading media</div>}
             {subtitle && !error && <div className="subtitle-overlay" style={{
               fontSize: subtitleConfig.font_size,

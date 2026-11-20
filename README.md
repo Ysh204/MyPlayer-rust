@@ -188,7 +188,7 @@ bun run tauri build
 Generated distribution artifacts:
 - **NSIS Setup Installer**: `src-tauri/target/release/bundle/nsis/MyPlayer Pro_1.0.0_x64-setup.exe`
 - **MSI Windows Installer**: `src-tauri/target/release/bundle/msi/MyPlayer Pro_1.0.0_x64_en-US.msi`
-- **Standalone Portable EXE**: `src-tauri/target/release/my_player.exe`
+- **Standalone Portable EXE**: `src-tauri/target/release/myplayer_pro_rust.exe`
 
 You can also run the release packager to prepare ready-to-upload files in `releases/`:
 

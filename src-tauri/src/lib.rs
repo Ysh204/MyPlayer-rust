@@ -38,10 +38,15 @@ pub fn run() {
                 (state, builder.additional_browser_args(&args))
             };
             app.manage(Mutex::new(state));
+            let decoder_path = app.path().resource_dir()?.join("bin/libmpv-2.dll");
+            app.manage(services::native_audio::NativeAudioBridge::new(decoder_path));
             builder.build()?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::get_launch_files,
+            commands::sync_native_audio,
+            commands::stop_native_audio,
             commands::open_media_file,
             commands::open_media_file_fast,
             commands::inspect_media_tracks,

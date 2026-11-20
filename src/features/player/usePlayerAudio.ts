@@ -19,23 +19,23 @@ export function readAudioTracks(video: HTMLVideoElement, inspected: TrackInfo[])
   }));
 }
 
-export function usePlayerAudio(videoRef: RefObject<HTMLVideoElement>, eq: EqState, volume: number) {
+export function usePlayerAudio(videoRef: RefObject<HTMLVideoElement>, eq: EqState, volume: number, nativeAudio: boolean) {
   const context = useRef<AudioContext>();
   const output = useRef<ReturnType<typeof createAudioOutput>>();
-  const latest = useRef({ eq, volume });
-  latest.current = { eq, volume };
+  const latest = useRef({ eq, volume, nativeAudio });
+  latest.current = { eq, volume, nativeAudio };
 
   const update = () => {
     const video = videoRef.current;
     if (!video) return;
     if (output.current) {
-      output.current.update(latest.current.eq, latest.current.volume);
+      output.current.update(latest.current.eq, latest.current.nativeAudio ? 0 : latest.current.volume);
     } else {
-      video.volume = Math.min(latest.current.volume / 100, 1);
+      video.volume = latest.current.nativeAudio ? 0 : Math.min(latest.current.volume / 100, 1);
     }
   };
 
-  useEffect(update, [eq, volume, videoRef]);
+  useEffect(update, [eq, volume, nativeAudio, videoRef]);
 
   useEffect(() => () => {
     const active = context.current;
