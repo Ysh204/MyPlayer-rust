@@ -99,14 +99,15 @@ export function PlayerScreen() {
   const index = playlist.findIndex(({ id }) => id === media?.id);
   const previous = index > 0 ? playlist[index - 1] : undefined;
   const next = index >= 0 ? playlist[index + 1] : undefined;
-  const canHide = Boolean(media && !loading && !error && drawer === 'none' && !menu && !settingsOpen);
+  const openingMedia = loading && duration === 0;
+  const canHide = Boolean(media && !openingMedia && !error && drawer === 'none' && !menu && !settingsOpen);
   const hudHidden = canHide && !controlsVisible;
   const hasTransport = Boolean(media || playlist.length || drawer !== 'none');
   const showControls = useCallback(() => {
     setControlsVisible(true);
     window.clearTimeout(hudTimer.current);
     if (canHide) hudTimer.current = window.setTimeout(() => {
-      if (!rootRef.current?.querySelector('.transport:hover, .window-bar:hover, .transport :focus-visible, .window-bar :focus-visible')) {
+      if (!rootRef.current?.querySelector('.transport-zone:hover, .window-bar:hover, .transport :focus-visible, .window-bar :focus-visible')) {
         setControlsVisible(false);
       }
     }, 2100);
@@ -400,7 +401,6 @@ export function PlayerScreen() {
     if (!settings.precisionSeeking && video.fastSeek) video.fastSeek(clamped);
     else video.currentTime = settings.precisionSeeking ? clamped : Math.min(Math.round(clamped), duration);
     setCurrentTime(video.currentTime);
-    showControls();
   }
 
   function seekBy(delta: number) {
@@ -511,8 +511,13 @@ export function PlayerScreen() {
         if (event.repeat || (target instanceof Element && target.closest('button'))) return;
         togglePlay();
         break;
-      case 'ArrowLeft': case 'KeyJ': seekBy(-settings.seekStep); break;
-      case 'ArrowRight': case 'KeyL': seekBy(settings.seekStep); break;
+      case 'ArrowLeft': case 'KeyJ':
+      case 'ArrowRight': case 'KeyL': {
+        event.preventDefault();
+        const direction = event.code === 'ArrowLeft' || event.code === 'KeyJ' ? -1 : 1;
+        seekBy(direction * settings.seekStep);
+        return;
+      }
       case 'ArrowUp': changeVolume(volume + settings.volumeStep); break;
       case 'ArrowDown': changeVolume(volume - settings.volumeStep); break;
       case 'KeyM': if (!event.repeat) mute(); break;
@@ -529,14 +534,19 @@ export function PlayerScreen() {
   }, []);
 
   const pictureHeight = aspectRatio ? Math.min(size.height, size.width / aspectRatio) : size.height;
-  const subtitleTop = Math.min(size.height - 8, (size.height - pictureHeight) / 2 + pictureHeight * subtitleConfig.vertical_position / 100);
-  const subtitle = cueText(currentTime - subtitleConfig.delay_seconds) || (drawer === 'subtitles' ? 'Subtitle preview' : '');
+  // Keep the same caption position while the transport fades in and out.
+  const subtitleTop = Math.min(size.height - (hasTransport ? 53 : 8),
+    (size.height - pictureHeight) / 2 + pictureHeight * subtitleConfig.vertical_position / 100);
+  const subtitle = error ? '' : selectedSubtitle === 'off' && drawer === 'subtitles' && aspectRatio > 0
+    ? 'Subtitle preview'
+    : cueText(currentTime - subtitleConfig.delay_seconds);
   const toggleDrawer = (panel: DrawerPanel) => setDrawer((active) => active === panel ? 'none' : panel);
   const dismissDrawer = () => setDrawer('none');
 
   return (
     <div ref={rootRef} className={['player-shell', fullscreen && 'is-fullscreen', hudHidden && 'hud-hidden'].filter(Boolean).join(' ')}
-      onPointerMove={showControls} onPointerDown={showControls} onPointerLeave={showControls}
+      onPointerEnter={showControls} onPointerMove={showControls}
+      onPointerDown={showControls} onPointerLeave={() => { if (!hudHidden) showControls(); }}
       onFocus={showControls} onBlur={showControls}
       onDragOver={(event) => {
         if (!isDesktop && event.dataTransfer.types.includes('Files')) {
@@ -553,11 +563,14 @@ export function PlayerScreen() {
         <div className="player-body">
           <main ref={viewportRef} aria-label="Video viewport"
             className="viewport"
-            onDoubleClick={(event) => { if (!(event.target as Element).closest('button')) void changeFullscreen(!fullscreen); }}
+            onDoubleClick={(event) => {
+              if (!(event.target as Element).closest('button, .transport')) void changeFullscreen(!fullscreen);
+            }}
             onClick={(event) => {
-              if (drawer !== 'none' && !(event.target as Element).closest('button')) dismissDrawer();
+              if (drawer !== 'none' && !(event.target as Element).closest('button, .transport')) dismissDrawer();
             }}
             onContextMenu={(event) => {
+              if ((event.target as Element).closest('.transport')) return;
               event.preventDefault();
               setMenu({ x: event.clientX, y: event.clientY });
             }}>
@@ -624,13 +637,22 @@ export function PlayerScreen() {
             {media && !sample && !error && !loading && aspectRatio === 0 &&
               <div className="media-placeholder"><Music2 size={25} /></div>}
             {loading && !error && <div className="loading-mark" role="status"><LoaderCircle size={21} /> Loading media</div>}
-            {subtitle && !error && <div className="subtitle-overlay" style={{
-              fontSize: subtitleConfig.font_size,
-              background: 'rgba(0, 0, 0, ' + subtitleConfig.background_opacity + ')',
-              top: hasTransport && !hudHidden ? Math.min(subtitleTop, size.height - 53) : subtitleTop,
-            }}>{subtitle}</div>}
+            <div className="subtitle-layer" aria-hidden={!subtitle}>
+              <div className="subtitle-overlay" style={{
+                fontSize: subtitleConfig.font_size,
+                background: 'rgba(0, 0, 0, ' + subtitleConfig.background_opacity + ')',
+                top: subtitleTop,
+              }}>{subtitle}</div>
+            </div>
             {dragging && <div className="drop-overlay"><FileVideo size={24} /> {drawer === 'playlist' ? 'Drop files to add to queue' : 'Drop files to open'}</div>}
             <OsdOverlay message={status} />
+            {hasTransport && <div className="transport-zone" onPointerEnter={showControls} onPointerLeave={showControls}>
+              <BottomControlsBar currentTime={currentTime} duration={duration} playing={playing} canPlay={Boolean(media && !error)}
+                volume={volume} drawer={drawer} isFullScreen={fullscreen} seekStep={settings.seekStep} hasPrevious={Boolean(previous)} hasNext={Boolean(next)}
+                menuOpen={Boolean(menu?.trigger)} onSeek={seek} onSeekDelta={seekBy} onTogglePlay={togglePlay} onVolumeChange={changeVolume}
+                onToggleMute={mute} onPrevious={() => previous && selectMedia(previous)} onNext={() => next && selectMedia(next)}
+                onToggleDrawer={toggleDrawer} onToggleFullscreen={() => void changeFullscreen(!fullscreen)} onOpenMenu={openMenu} />
+            </div>}
           </main>
 
           {drawer === 'playlist' && <PlaylistPanel items={playlist} activeId={media?.id} onSelect={selectMedia} onRemove={removeItem}
@@ -644,11 +666,6 @@ export function PlayerScreen() {
             onLoad={() => void openSubtitle()} onClose={dismissDrawer} />}
         </div>
 
-        {hasTransport && <BottomControlsBar currentTime={currentTime} duration={duration} playing={playing} canPlay={Boolean(media && !error)}
-          volume={volume} drawer={drawer} isFullScreen={fullscreen} seekStep={settings.seekStep} hasPrevious={Boolean(previous)} hasNext={Boolean(next)}
-          menuOpen={Boolean(menu?.trigger)} onSeek={seek} onSeekDelta={seekBy} onTogglePlay={togglePlay} onVolumeChange={changeVolume}
-          onToggleMute={mute} onPrevious={() => previous && selectMedia(previous)} onNext={() => next && selectMedia(next)}
-          onToggleDrawer={toggleDrawer} onToggleFullscreen={() => void changeFullscreen(!fullscreen)} onOpenMenu={openMenu} />}
       </div>
       {menu && <PlayerContextMenu anchor={menu} onClose={closeMenu} hasMedia={Boolean(media)} canSnapshot={canSnapshot}
         playing={playing} fullscreen={fullscreen} speed={speed} loop={loop} audioTracks={audioTracks}

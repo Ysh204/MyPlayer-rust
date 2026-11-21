@@ -55,11 +55,14 @@ button:disabled { cursor: default; }
 .loading-mark svg { animation: spin .85s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .drop-overlay { position: absolute; z-index: 8; inset: 8px; display: grid; place-content: center; justify-items: center; gap: 8px; border: 1px dashed var(--quiet); border-radius: 5px; background: #111e; color: var(--text); font-size: 13px; pointer-events: none; }
-.subtitle-overlay { position: absolute; z-index: 2; left: 50%; transform: translate(-50%, -100%); width: max-content; max-width: 92%; padding: 3px 8px; border-radius: 3px; text-align: center; white-space: pre-line; overflow-wrap: anywhere; line-height: 1.25; color: #fff; text-shadow: 0 1px 3px #000; pointer-events: none; }
+.subtitle-layer { position: absolute; z-index: 2; inset: 0; contain: strict; pointer-events: none; }
+.subtitle-overlay { position: absolute; left: 50%; transform: translate(-50%, -100%); width: max-content; max-width: 92%; padding: 3px 8px; border-radius: 3px; text-align: center; white-space: pre-line; overflow-wrap: anywhere; line-height: 1.25; color: #fff; text-shadow: 0 1px 3px #000; }
+.subtitle-overlay:empty { visibility: hidden; }
 .status-position { z-index: 6; position: absolute; top: 39px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 24px); pointer-events: none; }
 .status-message { display: block; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--text); padding: 5px 9px; font-size: 12px; text-align: center; }
 
-.transport { position: absolute; z-index: 8; bottom: 9px; left: 50%; transform: translateX(-50%); width: min(688px, calc(100% - 18px)); min-height: 38px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 3px 4px; background: var(--overlay); backdrop-filter: blur(12px); border: 1px solid var(--line); border-radius: 7px; }
+.transport-zone { position: absolute; z-index: 8; inset: auto 0 0; height: 56px; cursor: default; }
+.transport { position: absolute; bottom: 9px; left: 50%; transform: translateX(-50%); width: min(688px, calc(100% - 18px)); min-height: 38px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 3px 4px; background: var(--overlay); border: 1px solid var(--line); border-radius: 7px; }
 .timeline { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .transport-group, .volume-group { display: flex; align-items: center; }
 .transport .icon-button { width: 28px; height: 28px; }
@@ -149,8 +152,15 @@ button:disabled { cursor: default; }
 .menu-item svg { flex-shrink: 0; }
 
 .is-fullscreen .window-bar { display: none; }
-.window-bar, .transport { transition: opacity .15s; }
-.hud-hidden .window-bar, .hud-hidden .transport { opacity: 0; pointer-events: none; }
+.window-bar { transition: opacity .15s; }
+.transport { transition: opacity 85ms ease-out; will-change: opacity; }
+.hud-hidden .window-bar { opacity: 0; pointer-events: none; }
+/* The edge keeps receiving hover even when the controls are transparent. */
+.hud-hidden .transport-zone:not(:hover):not(:has(:focus-visible)) .transport {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 175ms ease-in;
+}
 .hud-hidden .viewport { cursor: none; }
 
 @media (max-width: 540px) {

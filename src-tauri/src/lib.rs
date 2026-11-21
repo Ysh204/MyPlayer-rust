@@ -32,6 +32,8 @@ pub fn run() {
                 let mut args = String::from(
                     "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --enable-blink-features=AudioVideoTracks",
                 );
+                // Composite video and captions together to avoid flashes when captions change.
+                args.push_str(" --disable_direct_composition_video_overlays=1");
                 if !state.hardware_decoding {
                     args.push_str(" --disable-accelerated-video-decode");
                 }
