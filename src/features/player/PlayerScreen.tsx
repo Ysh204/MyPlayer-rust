@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DragEvent, MouseEvent } from 'react';
-import { FileVideo, FolderOpen, LoaderCircle, Music2 } from 'lucide-react';
+import { Disc3, FileVideo, FolderOpen, LoaderCircle } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { isDesktop, isSubtitleFile, subtitleExtensions, tauriClient, videoExtensions } from '../../core/tauriClient';
 import { readStorage, savedPositions, settingsKey, writeStorage } from '../../core/playbackStorage';
@@ -8,6 +8,9 @@ import type { DrawerPanel, EqPreset, EqState, PlaylistItem, SubtitleConfig, Trac
 import { EqualizerPanel } from '../audio/EqualizerPanel';
 import { SubtitlePanel } from '../subtitles/SubtitlePanel';
 import { PlaylistPanel } from '../playlist/PlaylistPanel';
+import { PlaybackMarksPanel } from '../marks/PlaybackMarksPanel';
+import { usePlaybackMarks } from '../marks/usePlaybackMarks';
+import { PlayerHome, useRecentFiles } from './PlayerHome';
 import { PlaybackSettingsModal } from '../settings/PlaybackSettingsModal';
 import type { PlaybackSettings } from '../settings/PlaybackSettingsModal';
 import { BottomControlsBar } from './BottomControlsBar';
@@ -17,6 +20,7 @@ import type { MenuAnchor } from './PlayerContextMenu';
 import { TopWindowBar } from './TopWindowBar';
 import { audioTrackList, readAudioTracks, usePlayerAudio } from './usePlayerAudio';
 import { usePlayerSubtitles } from './usePlayerSubtitles';
+import { usePlaybackClock } from './usePlaybackClock';
 
 const INITIAL_EQ: EqState = {
   frequencies: [60, 230, 910, 3600, 14000], gains: [0, 0, 0, 0, 0],
@@ -50,7 +54,6 @@ export function PlayerScreen() {
   const addOnly = useRef(false);
   const [media, setMedia] = useState<PlaylistItem | null>(sampleEnabled ? SAMPLE[0] : null);
   const [playlist, setPlaylist] = useState<PlaylistItem[]>(sampleEnabled ? SAMPLE : []);
-  const [currentTime, setCurrentTime] = useState(sampleEnabled ? 1482 : 0);
   const [duration, setDuration] = useState(sampleEnabled ? 3245 : 0);
   const [playing, setPlaying] = useState(sampleEnabled);
   const [loading, setLoading] = useState(false);
@@ -62,7 +65,7 @@ export function PlayerScreen() {
   const previousVolume = useRef(100);
   const [speed, setSpeed] = useState(1);
   const [loop, setLoop] = useState(false);
-  const [drawer, setDrawer] = useState<DrawerPanel>(initialDrawer === 'audio' || initialDrawer === 'subtitles' || initialDrawer === 'playlist' ? initialDrawer : 'none');
+  const [drawer, setDrawer] = useState<DrawerPanel>(initialDrawer === 'audio' || initialDrawer === 'subtitles' || initialDrawer === 'playlist' || initialDrawer === 'marks' ? initialDrawer : 'none');
   const [menu, setMenu] = useState<MenuAnchor | null>(preview.get('menu') === 'true' ? { x: 430, y: 165 } : null);
   const [settingsOpen, setSettingsOpen] = useState(preview.get('settings') === 'true');
   const [settings, setSettings] = useState(() => ({ ...INITIAL_SETTINGS, ...readStorage<Partial<PlaybackSettings>>(settingsKey, {}) }));
@@ -73,6 +76,7 @@ export function PlayerScreen() {
   const [status, setStatus] = useState<string | null>(null);
   const statusTimer = useRef<number>();
   const hudTimer = useRef<number>();
+  const bufferingTimer = useRef<number>();
   const resumeClock = useRef(0);
   const mediaGeneration = useRef(0);
   const blobUrls = useRef(new Set<string>());
@@ -95,14 +99,19 @@ export function PlayerScreen() {
   const nativeAudio = Boolean(media?.path && nativeAudioPath === media.path);
   const prepareAudio = usePlayerAudio(videoRef, eq, volume, nativeAudio);
 
-  const sample = isSample(media);
+  const sample = Boolean(isSample(media));
+  const { currentTime, seek, seekExact, seekBy, getPosition, finishSeek, readClock, resetClock } = usePlaybackClock(
+    videoRef, duration, playing, sample, settings.precisionSeeking, sampleEnabled ? 1482 : 0,
+  );
   const index = playlist.findIndex(({ id }) => id === media?.id);
   const previous = index > 0 ? playlist[index - 1] : undefined;
   const next = index >= 0 ? playlist[index + 1] : undefined;
   const openingMedia = loading && duration === 0;
   const canHide = Boolean(media && !openingMedia && !error && drawer === 'none' && !menu && !settingsOpen);
   const hudHidden = canHide && !controlsVisible;
-  const hasTransport = Boolean(media || playlist.length || drawer !== 'none');
+  const hasTransport = Boolean(media);
+  const marks = usePlaybackMarks({ media, videoRef, getPosition, duration, onStatus: showStatus, onSeek: seekExact });
+  const { recentFiles, rememberFile, clearRecent } = useRecentFiles();
   const showControls = useCallback(() => {
     setControlsVisible(true);
     window.clearTimeout(hudTimer.current);
@@ -124,6 +133,7 @@ export function PlayerScreen() {
     if (isDesktop) void tauriClient.getHardwareDecoding().then(setHardwareDecoding).catch(() => {});
     return () => {
       window.clearTimeout(statusTimer.current);
+      window.clearTimeout(bufferingTimer.current);
       urls.forEach((url) => URL.revokeObjectURL(url));
       urls.clear();
     };
@@ -136,18 +146,6 @@ export function PlayerScreen() {
     observer.observe(viewport);
     return () => observer.disconnect();
   }, []);
-
-  useEffect(() => {
-    if (!playing || sample) return;
-    let frame: number;
-    const tick = () => {
-      const video = videoRef.current;
-      if (video) setCurrentTime(video.currentTime);
-      frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [playing, sample]);
 
   const updateTracks = useCallback(() => {
     const video = videoRef.current;
@@ -196,33 +194,40 @@ export function PlayerScreen() {
   useEffect(() => {
     if (!nativeAudio || !media?.path) return;
     const path = media.path;
+    const video = videoRef.current;
+    if (!video) return;
+    let active = true;
     const sync = () => {
-      const video = videoRef.current;
-      const position = video?.currentTime ?? 0;
-      const audioPlaying = Boolean(playing && video && !video.paused && !video.seeking && !loading);
-      void tauriClient.syncNativeAudio(path, position, audioPlaying, volume, eq).then((state) => {
-        if (state.error && !nativeAudioErrorShown.current) {
+      const audioPlaying = !video.paused && !video.ended && !video.seeking && video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
+      void tauriClient.syncNativeAudio(path, video.currentTime, audioPlaying, volume, eq, video.playbackRate, video.seeking).then((state) => {
+        if (active && state.error && !nativeAudioErrorShown.current) {
           nativeAudioErrorShown.current = true;
           showStatus(state.error);
         }
       }).catch((reason) => {
-        if (!nativeAudioErrorShown.current) {
+        if (active && !nativeAudioErrorShown.current) {
           nativeAudioErrorShown.current = true;
           showStatus(String(reason));
         }
       });
     };
+    const events = ['seeking', 'seeked', 'playing', 'waiting', 'pause', 'ratechange', 'ended'];
+    events.forEach((event) => video.addEventListener(event, sync));
     sync();
     const timer = window.setInterval(sync, 250);
-    return () => window.clearInterval(timer);
-  }, [media?.path, nativeAudio, playing, loading, volume, eq, showStatus]);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      events.forEach((event) => video.removeEventListener(event, sync));
+    };
+  }, [media?.path, nativeAudio, volume, eq, showStatus]);
 
   const savePosition = useCallback(() => {
     const video = videoRef.current;
     if (settings.autoResume && media?.path && video?.readyState && !video.error) {
-      savedPositions.save(media.path, video.currentTime, video.duration);
+      savedPositions.save(media.path, getPosition(), video.duration);
     }
-  }, [media, settings.autoResume]);
+  }, [media, settings.autoResume, getPosition]);
 
   useEffect(() => {
     const saveOnHide = () => { if (document.visibilityState === 'hidden') savePosition(); };
@@ -248,7 +253,8 @@ export function PlayerScreen() {
     nativeAudioErrorShown.current = false;
     setAudioTracks([]);
     setSelectedAudio('');
-    setCurrentTime(0);
+    resetClock(0);
+    window.clearTimeout(bufferingTimer.current);
     setDuration(isSample(item) ? 3245 : 0);
     setAspectRatio(isSample(item) ? 16 / 9 : 0);
     setCanSnapshot(false);
@@ -389,22 +395,9 @@ export function PlayerScreen() {
     else video.pause();
   }
 
-  function seek(time: number) {
-    if (!duration) return;
-    const clamped = Math.max(0, Math.min(time, duration));
-    if (sample) {
-      setCurrentTime(clamped);
-      return;
-    }
-    const video = videoRef.current as (HTMLVideoElement & { fastSeek?: (seconds: number) => void }) | null;
-    if (!video?.readyState) return;
-    if (!settings.precisionSeeking && video.fastSeek) video.fastSeek(clamped);
-    else video.currentTime = settings.precisionSeeking ? clamped : Math.min(Math.round(clamped), duration);
-    setCurrentTime(video.currentTime);
-  }
-
-  function seekBy(delta: number) {
-    seek((sample ? currentTime : videoRef.current?.currentTime ?? 0) + delta);
+  function finishBuffering() {
+    window.clearTimeout(bufferingTimer.current);
+    setLoading(false);
   }
 
   function changeVolume(value: number) {
@@ -519,6 +512,10 @@ export function PlayerScreen() {
         return;
       }
       case 'ArrowUp': changeVolume(volume + settings.volumeStep); break;
+      case 'KeyB':
+        if (!event.repeat) marks.addBookmark();
+        event.preventDefault();
+        return;
       case 'ArrowDown': changeVolume(volume - settings.volumeStep); break;
       case 'KeyM': if (!event.repeat) mute(); break;
       case 'KeyF': case 'F11': if (!event.repeat) void changeFullscreen(!fullscreen); break;
@@ -539,7 +536,7 @@ export function PlayerScreen() {
     (size.height - pictureHeight) / 2 + pictureHeight * subtitleConfig.vertical_position / 100);
   const subtitle = error ? '' : selectedSubtitle === 'off' && drawer === 'subtitles' && aspectRatio > 0
     ? 'Subtitle preview'
-    : cueText(currentTime - subtitleConfig.delay_seconds);
+    : cueText(currentTime, subtitleConfig.delay_seconds);
   const toggleDrawer = (panel: DrawerPanel) => setDrawer((active) => active === panel ? 'none' : panel);
   const dismissDrawer = () => setDrawer('none');
 
@@ -576,17 +573,18 @@ export function PlayerScreen() {
             }}>
             <video ref={videoRef} src={sample ? undefined : media?.uri} hidden={!media || Boolean(sample) || Boolean(error)}
               muted={nativeAudio}
-              preload="auto" playsInline loop={loop} crossOrigin="anonymous"
+              preload="auto" playsInline loop={loop && marks.end === null} crossOrigin="anonymous"
               onLoadedMetadata={(event) => {
                 const video = event.currentTarget;
                 const length = Number.isFinite(video.duration) ? video.duration : 0;
+                if (media?.path) rememberFile(media.path);
                 setDuration(length);
                 video.playbackRate = speed;
                 if (video.videoHeight) setAspectRatio(video.videoWidth / video.videoHeight);
                 const saved = settings.autoResume && media?.path ? savedPositions.get(media.path) : undefined;
                 if (saved && saved < length - 0.5) {
                   video.currentTime = saved;
-                  setCurrentTime(saved);
+                  resetClock(saved);
                 }
                 updateTracks();
                 playVideo();
@@ -596,18 +594,25 @@ export function PlayerScreen() {
                 if (media && !sample && Number.isFinite(length)) setDuration(length);
               }}
               onLoadedData={({ currentTarget }) => setCanSnapshot(currentTarget.videoWidth > 0)}
-              onPlaying={() => { setPlaying(true); setLoading(false); }}
-              onCanPlay={() => setLoading(false)}
-              onWaiting={({ currentTarget }) => { if (!currentTarget.paused) setLoading(true); }}
-              onPause={() => { setPlaying(false); savePosition(); }}
-              onTimeUpdate={({ currentTarget }) => {
-                setCurrentTime(currentTarget.currentTime);
+              onPlaying={() => { setPlaying(true); finishBuffering(); }}
+              onCanPlay={finishBuffering}
+              onWaiting={({ currentTarget }) => {
+                if (currentTarget.paused) return;
+                window.clearTimeout(bufferingTimer.current);
+                bufferingTimer.current = window.setTimeout(() => {
+                  if (!currentTarget.paused && currentTarget.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) setLoading(true);
+                }, 300);
+              }}
+              onPause={() => { finishBuffering(); setPlaying(false); savePosition(); }}
+              onTimeUpdate={() => {
+                readClock();
                 if (performance.now() - resumeClock.current > 2000) {
                   resumeClock.current = performance.now();
                   savePosition();
                 }
               }}
               onEnded={() => {
+                if (marks.repeatAtEnd()) return;
                 setPlaying(false);
                 savePosition();
                 if (next) selectMedia(next);
@@ -622,20 +627,22 @@ export function PlayerScreen() {
               }}
             />
             {sample && <img className="sample-frame" src={media?.uri} alt="Sample playback still" />}
-            {(!media || error) && (
+            {!media && <PlayerHome recentFiles={recentFiles} onOpen={() => void openFile()}
+              onSelect={(path) => openItems([tauriClient.localMedia(path)], false)} onClear={clearRecent} />}
+            {error && (
               <div className="empty-state">
-                {error && <h1>Unable to play this file</h1>}
+                <h1>Unable to play this file</h1>
                 <div className="error-actions">
                   <button className="primary-button" type="button" onClick={() => void openFile()}>
-                    <FolderOpen size={14} />{error ? 'Open another file' : 'Open file'}
+                    <FolderOpen size={14} />Open another file
                   </button>
-                  {error && <button className="secondary-button" type="button" onClick={() => selectMedia(null)}>Close media</button>}
+                  <button className="secondary-button" type="button" onClick={() => selectMedia(null)}>Close media</button>
                 </div>
-                <p>{error ?? 'Or drop a file here'}</p>
+                <p>{error}</p>
               </div>
             )}
             {media && !sample && !error && !loading && aspectRatio === 0 &&
-              <div className="media-placeholder"><Music2 size={25} /></div>}
+              <div className="media-placeholder"><Disc3 aria-hidden="true" size={54} strokeWidth={1} /><h1>{media.title}</h1></div>}
             {loading && !error && <div className="loading-mark" role="status"><LoaderCircle size={21} /> Loading media</div>}
             <div className="subtitle-layer" aria-hidden={!subtitle}>
               <div className="subtitle-overlay" style={{
@@ -647,14 +654,16 @@ export function PlayerScreen() {
             {dragging && <div className="drop-overlay"><FileVideo size={24} /> {drawer === 'playlist' ? 'Drop files to add to queue' : 'Drop files to open'}</div>}
             <OsdOverlay message={status} />
             {hasTransport && <div className="transport-zone" onPointerEnter={showControls} onPointerLeave={showControls}>
-              <BottomControlsBar currentTime={currentTime} duration={duration} playing={playing} canPlay={Boolean(media && !error)}
+              <BottomControlsBar key={media?.id} currentTime={currentTime} duration={duration} playing={playing} canPlay={Boolean(media && !error)}
                 volume={volume} drawer={drawer} isFullScreen={fullscreen} seekStep={settings.seekStep} hasPrevious={Boolean(previous)} hasNext={Boolean(next)}
-                menuOpen={Boolean(menu?.trigger)} onSeek={seek} onSeekDelta={seekBy} onTogglePlay={togglePlay} onVolumeChange={changeVolume}
+                bookmarks={marks.bookmarks} loopStart={marks.start} loopEnd={marks.end}
+                menuOpen={Boolean(menu?.trigger)} onSeek={seek} onSeekDelta={seekBy} onSeekComplete={finishSeek} onTogglePlay={togglePlay} onVolumeChange={changeVolume}
                 onToggleMute={mute} onPrevious={() => previous && selectMedia(previous)} onNext={() => next && selectMedia(next)}
                 onToggleDrawer={toggleDrawer} onToggleFullscreen={() => void changeFullscreen(!fullscreen)} onOpenMenu={openMenu} />
             </div>}
           </main>
 
+          {drawer === 'marks' && <PlaybackMarksPanel marks={marks} onClose={dismissDrawer} />}
           {drawer === 'playlist' && <PlaylistPanel items={playlist} activeId={media?.id} onSelect={selectMedia} onRemove={removeItem}
             onMove={moveItem} onAdd={() => void openFile(true)} onClose={dismissDrawer}
             onClear={() => { selectMedia(null); playlist.forEach(forgetItem); setPlaylist([]); }} />}

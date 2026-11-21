@@ -17,8 +17,8 @@
         "title": "MyPlayer Pro",
         "width": 1280,
         "height": 760,
-        "minWidth": 800,
-        "minHeight": 500,
+        "minWidth": 420,
+        "minHeight": 280,
         "decorations": false,
         "center": true
       }

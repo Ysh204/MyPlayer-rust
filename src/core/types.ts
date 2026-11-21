@@ -43,4 +43,4 @@ export interface TrackInfo {
   filePath?: string;
 }
 
-export type DrawerPanel = 'none' | 'audio' | 'subtitles' | 'playlist';
+export type DrawerPanel = 'none' | 'audio' | 'subtitles' | 'playlist' | 'marks';
