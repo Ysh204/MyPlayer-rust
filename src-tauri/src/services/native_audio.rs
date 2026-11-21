@@ -11,6 +11,7 @@ use serde::Serialize;
 
 use crate::data::models::eq_state::EqState;
 use crate::services::audio_filter_builder::build_audio_filter;
+use crate::services::media_inspector::MediaTrack;
 
 type Handle = *mut c_void;
 
@@ -32,6 +33,7 @@ pub struct AudioSync {
     pub eq: EqState,
     pub speed: f64,
     pub seeking: bool,
+    pub track: Option<u32>,
 }
 
 enum Message {
@@ -144,6 +146,38 @@ impl Drop for Mpv {
     fn drop(&mut self) { unsafe { (self.destroy_fn)(self.handle) } }
 }
 
+/// Inspect local containers for which the Matroska reader has no track table.
+/// Use an independent, paused reader so inspection never changes playback.
+pub fn inspect_audio_tracks(library: &PathBuf, path: &str) -> Result<Vec<MediaTrack>, String> {
+    let mpv = Mpv::new(library)?;
+    mpv.set("ao", "null")?;
+    mpv.command(&["loadfile", path, "replace"])?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let count = mpv.get("track-list/count").and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
+        if count > 0 {
+            let mut tracks = Vec::new();
+            for index in 0..count {
+                let property = |name: &str| mpv.get(&format!("track-list/{index}/{name}"));
+                if property("type").as_deref() != Some("audio") || property("external").as_deref() == Some("yes") { continue; }
+                let Some(id) = property("id") else { continue };
+                let codec = property("codec");
+                let name = property("title").filter(|s| !s.trim().is_empty()).unwrap_or_else(|| format!("Track {id}"));
+                let mut details = vec![name];
+                if let Some(channels) = property("demux-channels") { details.push(channels); }
+                if let Some(codec) = &codec { details.push(codec.to_uppercase()); }
+                tracks.push(MediaTrack {
+                    id: format!("mpv-{id}"), title: details.join(" · "), language: property("lang"), codec,
+                    is_default: property("default").as_deref() == Some("yes"), file_path: None,
+                });
+            }
+            return Ok(tracks);
+        }
+        if std::time::Instant::now() >= deadline { return Ok(Vec::new()); }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 fn run_worker(path: PathBuf, receiver: mpsc::Receiver<Message>, status: &Arc<Mutex<NativeAudioStatus>>) -> Result<(), String> {
     let mpv = Mpv::new(&path)?;
     let mut current_path: Option<String> = None;
@@ -154,6 +188,7 @@ fn run_worker(path: PathBuf, receiver: mpsc::Receiver<Message>, status: &Arc<Mut
     let mut last_volume = -1.0;
     let mut last_speed = 1.0;
     let mut last_paused: Option<bool> = None;
+    let mut last_track: Option<u32> = None;
 
     loop {
         // Only poll while a newly loaded file is getting ready. Reapplying a
@@ -188,11 +223,22 @@ fn run_worker(path: PathBuf, receiver: mpsc::Receiver<Message>, status: &Arc<Mut
         let Some(update) = latest.as_ref() else { continue };
         if current_path.as_deref() != Some(&update.path) {
             mpv.set("pause", "yes")?;
-            mpv.command(&["loadfile", &update.path, "replace"])?;
+            let aid = update.track.map_or_else(|| "auto".to_string(), |id| id.to_string());
+            mpv.command(&["loadfile", &update.path, "replace", "-1", &format!("aid={aid}")])?;
+            last_track = update.track;
             current_path = Some(update.path.clone());
             pending_seek = true;
             last_paused = Some(true);
             status.lock().unwrap().ready = false;
+        }
+        if last_track != update.track && mpv.get("path").as_deref() == Some(update.path.as_str()) {
+            let aid = update.track.map_or_else(|| "auto".to_string(), |id| id.to_string());
+            if let Err(error) = mpv.set("aid", &aid) {
+                status.lock().unwrap().error = Some(format!("Could not switch audio tracks: {error}"));
+                continue;
+            }
+            last_track = update.track;
+            pending_seek = true;
         }
         if (last_volume - update.volume).abs() > 0.01 {
             mpv.set("volume", &update.volume.clamp(0.0, 150.0).to_string())?;

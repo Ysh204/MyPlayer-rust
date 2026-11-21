@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { Check, X } from 'lucide-react';
 import type { TrackInfo } from '../../core/types';
@@ -23,13 +24,24 @@ export function PlayerPanel({ title, actions, children, onClose }: {
   );
 }
 
-export function TrackList({ tracks, selected, onSelect }: {
+export function TrackList({ tracks, selected, onSelect, label }: {
+  label: string;
   tracks: TrackInfo[];
   selected: string;
   onSelect: (id: string) => void;
 }) {
+  const trackList = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const list = trackList.current;
+    const row = list?.querySelector('[aria-pressed="true"]');
+    if (!list || !row) return;
+    const bounds = list.getBoundingClientRect();
+    const active = row.getBoundingClientRect();
+    if (active.bottom > bounds.bottom) list.scrollTop += active.bottom - bounds.bottom;
+    else if (active.top < bounds.top) list.scrollTop += active.top - bounds.top;
+  }, [selected, tracks]);
   return (
-    <div className="track-list">
+    <div className="track-list track-scroll" ref={trackList} role="group" aria-label={label}>
       {tracks.map((track) => {
         const label = track.title || track.language || track.id;
         return (

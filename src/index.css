@@ -151,6 +151,12 @@ button:disabled { cursor: default; }
 .track-row svg { flex-shrink: 0; }
 .track-row:hover { background: var(--hover); color: var(--text); }
 .track-row[aria-pressed="true"] { background: var(--accent-surface); color: var(--accent); }
+.track-scroll { max-height: clamp(66px, calc(100vh - 445px), 168px); overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 5px; padding: 2px; }
+.track-scroll .track-row span, .track-flyout .menu-label { white-space: normal; overflow-wrap: anywhere; }
+@media (max-height: 550px) {
+  .panel-stack:has(.track-scroll) { gap: 8px; }
+  .panel-stack:has(.track-scroll) .panel-section { gap: 4px; }
+}
 .field-select { min-width: 0; height: 32px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--raised); font-size: 12px; }
 .eq-bands { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; padding: 10px 5px; border: 1px solid var(--line); border-radius: 5px; }
 .eq-band { display: grid; gap: 5px; justify-items: center; font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -183,6 +189,10 @@ button:disabled { cursor: default; }
 
 .player-menu { position: fixed; z-index: 12; width: min(221px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow: auto; padding: 5px; border: 1px solid var(--line); background: var(--surface); border-radius: 10px; box-shadow: 0 6px 16px #0006; }
 .player-menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px; }
+.player-menu:not(.track-flyout) { width: min(221px, 48vw); }
+.track-flyout { max-height: min(390px, calc(100% - 16px)); overscroll-behavior: contain; }
+.track-flyout .menu-item { height: auto; min-height: 30px; padding-block: 5px; }
+.menu-item[aria-expanded="true"], .track-flyout .menu-item[aria-pressed="true"] { color: var(--accent); background: var(--accent-surface); }
 .menu-item { display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: 4px; width: 100%; height: 30px; text-align: left; font-size: 12px; }
 .menu-item:hover:not(:disabled), .menu-item:focus-visible { background: var(--hover); }
 .menu-item:focus-visible { outline-offset: -2px; }

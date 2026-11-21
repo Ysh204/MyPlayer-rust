@@ -3,6 +3,7 @@ import type { RefObject } from 'react';
 import { parseSubtitles, plainSubtitle } from '../../core/subtitleParser';
 import { tauriClient } from '../../core/tauriClient';
 import type { SubtitleCue, TrackInfo } from '../../core/types';
+import { labelTracks } from '../../core/trackLabels';
 
 const OFF = { id: 'off', title: 'Off' };
 
@@ -102,7 +103,7 @@ export function usePlayerSubtitles(videoRef: RefObject<HTMLVideoElement>, showSt
         if (track.kind !== 'captions' && track.kind !== 'subtitles') return [];
         const isDefault = track.mode === 'showing';
         if (isDefault) track.mode = 'hidden';
-        return [{ id: `native:${index}`, title: track.label || track.language || `Track ${index + 1}`, isDefault }];
+        return [{ id: `native:${index}`, title: track.label, language: track.language, isDefault }];
       });
       if (options.length) register(options);
     };
@@ -139,5 +140,6 @@ export function usePlayerSubtitles(videoRef: RefObject<HTMLVideoElement>, showSt
     return lines.join('\n');
   }
 
-  return { tracks, selected, reset, register, load, cueText, select: (id: string) => select(id, tracks) };
+  const labelled = useMemo(() => labelTracks(tracks, 0), [tracks]);
+  return { tracks: labelled, selected, reset, register, load, cueText, select: (id: string) => select(id, tracks) };
 }

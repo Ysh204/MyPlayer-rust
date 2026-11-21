@@ -26,10 +26,10 @@ Open a file with **Ctrl + O**, drag it into the window, or open it from Explorer
 - Press **B** to bookmark the current position. Open **More actions → Bookmarks & loop** to jump to or remove a bookmark. For A–B repeat, choose **Set start**, play or seek to the other end, then choose **Set end**. **Clear** stops the repeat.
 - Reopen one of the last three local files from **Recently played** on the start screen. **Clear** removes that list.
 - Reorder files in the queue and resume local files from their saved position. Playback settings include seek and volume steps, precise seeking, and GPU video decoding. Restart the player after changing GPU decoding.
-- Adjust the five-band equalizer, preamp, Night Mode compressor, or audio delay. Switch audio tracks when the playback engine exposes multiple tracks.
+- Hover over **Audio track** in the playback menu to see the available tracks beside it. Track names wrap and include the language when tagged. You can also switch tracks in **Audio and equalizer**, where the list scrolls separately from the sound controls.
 - Load external SRT, WebVTT, ASS, SSA, or MicroDVD SUB subtitles, or select embedded text subtitles from an MKV. Adjust subtitle size, position, background opacity, and timing.
 
-The file picker accepts MP4, M4V, MKV, WebM, MOV, AVI, OGV, FLAC, MP3, M4A, WAV, OGG, and Opus. Playback depends on the codecs inside the file. WebView2 renders the video and plays audio it can decode. For MKV files, the desktop app can use bundled libmpv when WebView2 reports no support for the primary E-AC-3 (Dolby Digital Plus), AC-3, DTS, or TrueHD track. Video still depends on WebView2. See [native decoder details](src-tauri/bin/README.md).
+The file picker accepts MP4, M4V, MKV, WebM, MOV, AVI, OGV, FLAC, MP3, M4A, WAV, OGG, and Opus. WebView2 renders video and handles ordinary single-track audio. On Windows, bundled libmpv handles audio for files with multiple inspected tracks and can play codecs such as E-AC-3 (Dolby Digital Plus), AC-3, DTS, and TrueHD when WebView2 lacks support. Video compatibility depends on WebView2. See [native decoder details](src-tauri/bin/README.md).
 
 ### Keyboard shortcuts
 
