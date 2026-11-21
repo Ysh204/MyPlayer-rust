@@ -52,6 +52,7 @@
       "digestAlgorithm": "sha256",
       "timestampUrl": "",
       "nsis": {
+        "installerIcon": "icons/icon.ico",
         "installMode": "currentUser",
         "installerHooks": "windows/media-associations.nsh"
       }

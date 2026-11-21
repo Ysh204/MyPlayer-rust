@@ -1,7 +1,8 @@
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Film, Minus, Settings2, Square, X } from 'lucide-react';
+import { Minus, Settings2, Square, X } from 'lucide-react';
 import { isDesktop } from '../../core/tauriClient';
 import { PlayerButton } from './PlayerButton';
+import { PlayerLogo } from './PlayerLogo';
 
 interface Props {
   title: string;
@@ -14,7 +15,7 @@ export function TopWindowBar({ title, onOpenSettings }: Props) {
   return (
     <header className="window-bar" data-tauri-drag-region>
       <div data-tauri-drag-region className="window-title" title={title}>
-        {title && <><Film size={14} aria-hidden="true" /><span data-tauri-drag-region>{title}</span></>}
+        {title && <><PlayerLogo /><span data-tauri-drag-region>{title}</span></>}
       </div>
       <div className="window-actions">
         <PlayerButton label="Playback settings" onClick={onOpenSettings}><Settings2 size={14} /></PlayerButton>

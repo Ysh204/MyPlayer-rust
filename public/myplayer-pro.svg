@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="1024" height="1024" viewBox="0 0 512 512" role="img" aria-label="MyPlayer Pro">
+  <title>MyPlayer Pro</title>
+  <defs>
+    <symbol id="mark" viewBox="128 104 276 316">
+      <path fill="#EEDFC3" d="M136 146 Q136 112 169 112 H213
+        C243 112 260 119 288 136 L350 172 Q395 199 395 237
+        Q395 269 353 294 L229 367 V290 L311 242 Q320 237 310 231
+        L211 174 V264 L136 307 Z"/>
+      <path fill="#BFA47E" d="M136 329 L211 285 V370 Q211 380 201 386
+        L150 416 Q136 424 136 408 Z"/>
+    </symbol>
+  </defs>
+  <rect x="14" y="14" width="484" height="484" rx="108" fill="#25231F"
+        stroke="#514C42" stroke-width="3"/>
+  <use xlink:href="#mark" x="116" y="84" width="304" height="348"/>
+</svg>
