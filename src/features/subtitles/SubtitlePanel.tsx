@@ -29,7 +29,7 @@ export function SubtitlePanel({ config, tracks, selected, hasMedia, onSelect, on
       <div className="panel-stack">
         <section className="panel-section">
           <h3 className="panel-label">Subtitle track</h3>
-          <TrackList tracks={tracks} selected={selected} onSelect={onSelect} />
+          <TrackList label="Subtitle tracks" tracks={tracks} selected={selected} onSelect={onSelect} />
           <button type="button" className="secondary-button" onClick={onLoad} disabled={!hasMedia}>
             <FolderOpen size={14} /> Load subtitle file…
           </button>

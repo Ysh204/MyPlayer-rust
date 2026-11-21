@@ -29,24 +29,6 @@ pub struct MediaTracksResult {
     pub subtitle_tracks: Vec<MediaTrack>,
 }
 
-fn format_language_name(lang: Option<&str>) -> String {
-    match lang.map(|s| s.to_lowercase()).as_deref() {
-        Some("eng") | Some("en") => "English".to_string(),
-        Some("spa") | Some("es") => "Spanish".to_string(),
-        Some("fre") | Some("fra") | Some("fr") => "French".to_string(),
-        Some("ger") | Some("deu") | Some("de") => "German".to_string(),
-        Some("hin") | Some("hi") => "Hindi".to_string(),
-        Some("jpn") | Some("ja") => "Japanese".to_string(),
-        Some("ita") | Some("it") => "Italian".to_string(),
-        Some("rus") | Some("ru") => "Russian".to_string(),
-        Some("chi") | Some("zho") | Some("zh") => "Chinese".to_string(),
-        Some("por") | Some("pt") => "Portuguese".to_string(),
-        Some("kor") | Some("ko") => "Korean".to_string(),
-        Some(code) if !code.trim().is_empty() => code.to_uppercase(),
-        _ => "Track".to_string(),
-    }
-}
-
 fn format_codec_name(codec_id: &str) -> &'static str {
     let c = codec_id.to_uppercase();
     if c.contains("EAC3") || c.contains("E_AC3") {
@@ -90,7 +72,6 @@ pub fn inspect_media_file(file_path: &str) -> MediaTracksResult {
             for track in mkv.tracks {
                 let track_num = track.number;
                 let lang_str = track.language.map(|l| format!("{}", l));
-                let lang_name = format_language_name(lang_str.as_deref());
                 let codec_short = format_codec_name(&track.codec_id);
                 let codec = Some(track.codec_id.clone());
                 let is_default = track.default;
@@ -108,21 +89,10 @@ pub fn inspect_media_file(file_path: &str) -> MediaTracksResult {
                             _ => "",
                         };
 
-                        let title = if let Some(ref name) = track.name {
-                            if !name.trim().is_empty() {
-                                format!("{}{}", name.trim(), channels_str)
-                            } else {
-                                format!("{}{} (Track {})", lang_name, channels_str, track_num)
-                            }
-                        } else {
-                            let codec_label = if !codec_short.is_empty() {
-                                format!(" - {}", codec_short)
-                            } else {
-                                "".to_string()
-                            };
-                            format!("{}{}{} (Track {})", lang_name, codec_label, channels_str, track_num)
-                        };
-
+                        let name = track.name.as_deref().map(str::trim).filter(|name| !name.is_empty())
+                            .map(str::to_owned).unwrap_or_else(|| format!("Track {}", track_num));
+                        let codec_label = if codec_short.is_empty() { String::new() } else { format!(" · {}", codec_short) };
+                        let title = format!("{}{}{}", name, channels_str, codec_label);
                         result.audio_tracks.push(MediaTrack {
                             id: format!("audio-{}", track_num),
                             title,
@@ -134,20 +104,13 @@ pub fn inspect_media_file(file_path: &str) -> MediaTracksResult {
                     }
                     matroska::Tracktype::Subtitle
                         if track.codec_id.starts_with("S_TEXT/") || track.codec_id.starts_with("D_WEBVTT/") => {
-                        let title = if let Some(ref name) = track.name {
-                            if !name.trim().is_empty() {
-                                name.trim().to_string()
+                        let title = track.name.as_deref().map(str::trim)
+                            .filter(|name| !name.is_empty()).map(str::to_owned)
+                            .unwrap_or_else(|| if codec_short.is_empty() {
+                                format!("Track {}", track_num)
                             } else {
-                                format!("{} [Embedded] (Track {})", lang_name, track_num)
-                            }
-                        } else {
-                            let codec_label = if !codec_short.is_empty() {
-                                format!(" [{}]", codec_short)
-                            } else {
-                                "".to_string()
-                            };
-                            format!("{}{} (Track {})", lang_name, codec_label, track_num)
-                        };
+                                format!("Track {} [{}]", track_num, codec_short)
+                            });
 
                         result.subtitle_tracks.push(MediaTrack {
                             id: format!("sub-{}", track_num),
@@ -164,19 +127,7 @@ pub fn inspect_media_file(file_path: &str) -> MediaTracksResult {
         }
     }
 
-    // 2. Fallback: If no audio tracks detected, provide primary stream
-    if result.audio_tracks.is_empty() {
-        result.audio_tracks.push(MediaTrack {
-            id: "audio-default".to_string(),
-            title: "Primary Audio (Default / Stereo / 5.1)".to_string(),
-            language: Some("en".to_string()),
-            codec: None,
-            is_default: true,
-            file_path: None,
-        });
-    }
-
-    // 3. Scan directory for matching external sidecar subtitle files
+    // Scan directory for matching external sidecar subtitle files
     if let Some(parent) = path.parent() {
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
         scan_sidecar_subtitles(parent, stem, &mut result.subtitle_tracks);

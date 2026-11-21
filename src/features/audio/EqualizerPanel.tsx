@@ -23,7 +23,7 @@ export function EqualizerPanel({ eq, presets, audioTracks, selectedTrack, onSele
       <div className="panel-stack">
         <section className="panel-section">
           <h3 className="panel-label">Audio track</h3>
-          {audioTracks.length ? <TrackList tracks={audioTracks} selected={selectedTrack} onSelect={onSelectTrack} /> :
+          {audioTracks.length ? <TrackList label="Audio tracks" tracks={audioTracks} selected={selectedTrack} onSelect={onSelectTrack} /> :
             <p className="help-text">The player selects the default audio track.</p>}
         </section>
 

@@ -23,10 +23,10 @@ pub fn get_launch_files() -> Vec<String> {
 #[tauri::command]
 pub fn sync_native_audio(
     bridge: State<'_, NativeAudioBridge>, path: String, position: f64,
-    playing: bool, volume: f64, eq: EqState, speed: Option<f64>, seeking: Option<bool>,
+    playing: bool, volume: f64, eq: EqState, speed: Option<f64>, seeking: Option<bool>, track: Option<u32>,
 ) -> Result<NativeAudioStatus, String> {
     bridge.sync(AudioSync { path, position, playing, volume, eq,
-        speed: speed.unwrap_or(1.0), seeking: seeking.unwrap_or(false) })
+        speed: speed.unwrap_or(1.0), seeking: seeking.unwrap_or(false), track })
 }
 
 #[tauri::command]
@@ -98,9 +98,16 @@ pub fn open_media_file_fast(state: State<'_, Mutex<AppState>>, path: String) -> 
 /// Background inspection: parses container headers + sidecars (can be slow) — call
 /// *after* the video element has already started playing.
 #[tauri::command]
-pub async fn inspect_media_tracks(path: String) -> Result<MediaOpenResponse, String> {
+pub async fn inspect_media_tracks(app: tauri::AppHandle, path: String) -> Result<MediaOpenResponse, String> {
+    use tauri::Manager;
     tauri::async_runtime::spawn_blocking(move || {
-        let inspected = inspect_media_file(&path);
+        let mut inspected = inspect_media_file(&path);
+        if inspected.audio_tracks.is_empty() && std::path::Path::new(&path).is_file() {
+            if let Ok(dir) = app.path().resource_dir() {
+                let library = dir.join("bin/libmpv-2.dll");
+                inspected.audio_tracks = crate::services::native_audio::inspect_audio_tracks(&library, &path).unwrap_or_default();
+            }
+        }
         MediaOpenResponse {
             clean_title: clean_media_title(&path),
             raw_path: path,

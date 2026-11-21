@@ -4,6 +4,7 @@ import { Disc3, FileVideo, FolderOpen, LoaderCircle } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { isDesktop, isSubtitleFile, subtitleExtensions, tauriClient, videoExtensions } from '../../core/tauriClient';
 import { readStorage, savedPositions, settingsKey, writeStorage } from '../../core/playbackStorage';
+import { labelTracks } from '../../core/trackLabels';
 import type { DrawerPanel, EqPreset, EqState, PlaylistItem, SubtitleConfig, TrackInfo } from '../../core/types';
 import { EqualizerPanel } from '../audio/EqualizerPanel';
 import { SubtitlePanel } from '../subtitles/SubtitlePanel';
@@ -37,6 +38,10 @@ const nativeAudioCodecs: Record<string, string> = {
   A_AC3: 'audio/mp4; codecs="ac-3"',
   A_DTS: 'audio/mp4; codecs="dtsc"',
   A_TRUEHD: 'audio/mp4; codecs="mlpa"',
+  eac3: 'audio/mp4; codecs="ec-3"',
+  ac3: 'audio/mp4; codecs="ac-3"',
+  dts: 'audio/mp4; codecs="dtsc"',
+  truehd: 'audio/mp4; codecs="mlpa"',
 };
 const SAMPLE: PlaylistItem[] = ['Are You Happy in Your Life', 'Trip of a Lifetime', 'The Box', 'The Corridor']
   .map((title, index) => ({ id: 'sample-' + index, uri: '/sample_frame.jpg', title: 'Dark Matter · ' + title }));
@@ -82,10 +87,9 @@ export function PlayerScreen() {
   const blobUrls = useRef(new Set<string>());
   const [eq, setEq] = useState(INITIAL_EQ);
   const [presets, setPresets] = useState<EqPreset[]>([]);
-  const inspectedAudio = useRef<TrackInfo[]>([]);
-  const [audioTracks, setAudioTracks] = useState<TrackInfo[]>([]);
-  const [selectedAudio, setSelectedAudio] = useState('');
-  const [nativeAudioPath, setNativeAudioPath] = useState<string | null>(null);
+  const [fileAudioTracks, setFileAudioTracks] = useState<TrackInfo[]>([]);
+  const [webAudioTracks, setWebAudioTracks] = useState<TrackInfo[]>([]);
+  const [chosenAudio, setChosenAudio] = useState('');
   const nativeAudioErrorShown = useRef(false);
   const [subtitleConfig, setSubtitleConfig] = useState(INITIAL_SUB);
 
@@ -96,7 +100,16 @@ export function PlayerScreen() {
   }, []);
   const { tracks: subtitleTracks, selected: selectedSubtitle, reset: resetSubtitles, register: registerSubtitles,
     load: loadSubtitles, select: selectSubtitle, cueText } = usePlayerSubtitles(videoRef, showStatus);
-  const nativeAudio = Boolean(media?.path && nativeAudioPath === media.path);
+  const audioTracks = fileAudioTracks.length ? fileAudioTracks : webAudioTracks;
+  const activeAudio = audioTracks.find(track => track.id === chosenAudio)
+    ?? audioTracks.find(track => track.isDefault) ?? audioTracks[0];
+  const selectedAudio = activeAudio?.id ?? '';
+  const codecType = nativeAudioCodecs[activeAudio?.codec ?? ''];
+  const nativeAudio = Boolean(media?.path && fileAudioTracks.length &&
+    (fileAudioTracks.length > 1 || !webAudioTracks.length || (codecType && !videoRef.current?.canPlayType(codecType))));
+  const nativeAudioPath = nativeAudio ? media?.path : undefined;
+  const nativeTrack = nativeAudio && activeAudio ? (activeAudio.id.startsWith('mpv-')
+    ? Number(activeAudio.id.slice(4)) : fileAudioTracks.indexOf(activeAudio) + 1) : undefined;
   const prepareAudio = usePlayerAudio(videoRef, eq, volume, nativeAudio);
 
   const sample = Boolean(isSample(media));
@@ -150,9 +163,7 @@ export function PlayerScreen() {
   const updateTracks = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
-    const tracks = readAudioTracks(video, inspectedAudio.current);
-    setAudioTracks(tracks);
-    setSelectedAudio(tracks.find((track) => track.isDefault)?.id ?? '');
+    setWebAudioTracks(readAudioTracks(video));
   }, []);
 
   useEffect(() => {
@@ -174,17 +185,11 @@ export function PlayerScreen() {
     let active = true;
     void tauriClient.inspectMedia(path).then((tracks) => {
       if (!active) return;
-      inspectedAudio.current = tracks.audioTracks;
-      updateTracks();
+      setFileAudioTracks(labelTracks(tracks.audioTracks));
       registerSubtitles(tracks.subtitleTracks);
-      const audioCodec = tracks.audioTracks.find((track) => track.isDefault)?.codec ?? tracks.audioTracks[0]?.codec;
-      if (audioCodec && nativeAudioCodecs[audioCodec] &&
-        !videoRef.current?.canPlayType(nativeAudioCodecs[audioCodec])) {
-        setNativeAudioPath(path);
-      }
     }).catch(() => {});
     return () => { active = false; };
-  }, [media, registerSubtitles, updateTracks]);
+  }, [media, registerSubtitles]);
 
   useEffect(() => {
     if (!nativeAudioPath) return;
@@ -199,7 +204,7 @@ export function PlayerScreen() {
     let active = true;
     const sync = () => {
       const audioPlaying = !video.paused && !video.ended && !video.seeking && video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
-      void tauriClient.syncNativeAudio(path, video.currentTime, audioPlaying, volume, eq, video.playbackRate, video.seeking).then((state) => {
+      void tauriClient.syncNativeAudio(path, video.currentTime, audioPlaying, volume, eq, video.playbackRate, video.seeking, nativeTrack).then((state) => {
         if (active && state.error && !nativeAudioErrorShown.current) {
           nativeAudioErrorShown.current = true;
           showStatus(state.error);
@@ -220,7 +225,7 @@ export function PlayerScreen() {
       window.clearInterval(timer);
       events.forEach((event) => video.removeEventListener(event, sync));
     };
-  }, [media?.path, nativeAudio, volume, eq, showStatus]);
+  }, [media?.path, nativeAudio, nativeTrack, volume, eq, showStatus]);
 
   const savePosition = useCallback(() => {
     const video = videoRef.current;
@@ -248,11 +253,10 @@ export function PlayerScreen() {
     ++mediaGeneration.current;
     videoRef.current?.pause();
     resetSubtitles(item?.path);
-    inspectedAudio.current = [];
-    setNativeAudioPath(null);
+    setFileAudioTracks([]);
     nativeAudioErrorShown.current = false;
-    setAudioTracks([]);
-    setSelectedAudio('');
+    setWebAudioTracks([]);
+    setChosenAudio('');
     resetClock(0);
     window.clearTimeout(bufferingTimer.current);
     setDuration(isSample(item) ? 3245 : 0);
@@ -412,6 +416,11 @@ export function PlayerScreen() {
   }
 
   function selectAudio(id: string) {
+    if (fileAudioTracks.some(track => track.id === id)) {
+      nativeAudioErrorShown.current = false;
+      setChosenAudio(id);
+      return;
+    }
     const video = videoRef.current;
     const tracks = video && audioTrackList(video);
     const index = Number(id.split(':')[1]);

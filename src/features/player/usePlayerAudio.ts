@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import type { EqState, TrackInfo } from '../../core/types';
 import { createAudioOutput } from '../../core/audioOutput';
+import { labelTracks } from '../../core/trackLabels';
 
 interface AudioTrack { enabled: boolean; label: string; language: string }
 type TrackCollection = EventTarget & ArrayLike<AudioTrack>;
@@ -10,13 +11,14 @@ export function audioTrackList(video: HTMLVideoElement): TrackCollection | undef
   return (video as HTMLVideoElement & { audioTracks?: TrackCollection }).audioTracks;
 }
 
-export function readAudioTracks(video: HTMLVideoElement, inspected: TrackInfo[]) {
+export function readAudioTracks(video: HTMLVideoElement): TrackInfo[] {
   const tracks = Array.from(audioTrackList(video) ?? []);
-  return tracks.map((track, index) => ({
+  return labelTracks(tracks.map((track, index) => ({
     id: `audio:${index}`,
-    title: track.label || inspected[index]?.title || track.language || `Track ${index + 1}`,
+    title: track.label,
+    language: track.language,
     isDefault: track.enabled,
-  }));
+  })));
 }
 
 export function usePlayerAudio(videoRef: RefObject<HTMLVideoElement>, eq: EqState, volume: number, nativeAudio: boolean) {
