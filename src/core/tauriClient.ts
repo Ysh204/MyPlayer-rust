@@ -16,9 +16,9 @@ export const tauriClient = {
     return invoke<string[]>('get_launch_files');
   },
 
-  syncNativeAudio(path: string, position: number, playing: boolean, volume: number, eq: EqState) {
+  syncNativeAudio(path: string, position: number, playing: boolean, volume: number, eq: EqState, speed: number, seeking: boolean) {
     return invoke<{ ready: boolean; codec?: string; position?: number; error?: string }>('sync_native_audio',
-      { path, position, playing, volume, eq });
+      { path, position, playing, volume, eq, speed, seeking });
   },
 
   stopNativeAudio(path: string) {

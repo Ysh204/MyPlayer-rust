@@ -48,9 +48,9 @@ server.listen(PORT, async () => {
   console.log(`Server listening on http://localhost:${PORT}`);
 
   const chromePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-
+  let browser;
   try {
-    const browser = await puppeteer.launch({
+    browser = await puppeteer.launch({
       executablePath: chromePath,
       headless: 'new',
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--window-size=1366,768'],
@@ -60,6 +60,10 @@ server.listen(PORT, async () => {
     await page.setViewport({ width: 1366, height: 768, deviceScaleFactor: 2 });
 
     const screenshots = [
+      {
+        name: '00_open_player.png',
+        url: `http://localhost:${PORT}/`,
+      },
       {
         name: '01_main_player.png',
         url: `http://localhost:${PORT}/?sample=true`,
@@ -84,24 +88,37 @@ server.listen(PORT, async () => {
         name: '06_playback_settings.png',
         url: `http://localhost:${PORT}/?sample=true&settings=true`,
       },
+      {
+        name: '07_bookmarks.png',
+        url: `http://localhost:${PORT}/?sample=true&drawer=marks`,
+        async prepare() {
+          await page.keyboard.press('b');
+          await page.click('[aria-label="Set loop start at current position"]');
+          await page.click('[aria-label="Forward 5 seconds"]');
+          await page.click('[aria-label="Set loop end at current position"]');
+          await page.mouse.move(15, 90);
+          await page.waitForSelector('.status-message', { hidden: true });
+        },
+      },
     ];
 
     for (const item of screenshots) {
       console.log(`Navigating to ${item.name}...`);
       await page.goto(item.url, { waitUntil: 'networkidle0' });
+      await item.prepare?.();
       await new Promise((r) => setTimeout(r, 600)); // wait for transitions
       const outPath = path.join(OUTPUT_DIR, item.name);
       await page.screenshot({ path: outPath, type: 'png' });
       console.log(`Saved: ${outPath}`);
     }
 
-    await browser.close();
     console.log('All screenshots captured successfully!');
   } catch (err) {
     console.error('Failed to capture screenshots:', err);
+    process.exitCode = 1;
   } finally {
+    await browser?.close();
     server.close();
-    process.exit(0);
   }
 });
 

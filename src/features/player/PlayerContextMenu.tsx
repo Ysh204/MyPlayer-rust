@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
-  ArrowLeft, Camera, Captions, Check, ChevronRight, FolderOpen, Gauge, ListMusic, Maximize,
+  ArrowLeft, Bookmark, Camera, Captions, Check, ChevronRight, FolderOpen, Gauge, ListMusic, Maximize,
   Minimize, Pause, Play, Repeat, Settings2, SlidersHorizontal, Volume2, X,
 } from 'lucide-react';
 import type { DrawerPanel, TrackInfo } from '../../core/types';
@@ -109,6 +109,7 @@ export function PlayerContextMenu(props: Props) {
           </MenuItem>
           <MenuItem icon={<Gauge size={15} />} hint={`${props.speed}×`} end={<ChevronRight size={14} />} onClick={() => setPage('speed')}>Playback speed</MenuItem>
           <MenuItem icon={<Repeat size={15} />} end={props.loop && <Check size={15} />} onClick={() => run(props.onLoop)}>Loop video</MenuItem>
+          <MenuItem icon={<Bookmark size={15} />} disabled={!props.hasMedia} onClick={() => run(() => props.onDrawer('marks'))}>Bookmarks &amp; loop</MenuItem>
           <hr />
           {props.audioTracks.length > 1 && <MenuItem icon={<Volume2 size={15} />} end={<ChevronRight size={14} />} onClick={() => setPage('audio')}>Audio track</MenuItem>}
           {props.subtitleTracks.length > 1 && <MenuItem icon={<Captions size={15} />} end={<ChevronRight size={14} />} onClick={() => setPage('subtitles')}>Subtitle track</MenuItem>}

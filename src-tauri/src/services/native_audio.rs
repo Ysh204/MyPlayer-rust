@@ -30,6 +30,8 @@ pub struct AudioSync {
     pub playing: bool,
     pub volume: f64,
     pub eq: EqState,
+    pub speed: f64,
+    pub seeking: bool,
 }
 
 enum Message {
@@ -150,33 +152,37 @@ fn run_worker(path: PathBuf, receiver: mpsc::Receiver<Message>, status: &Arc<Mut
     let mut last_filter = String::new();
     let mut last_delay = 0.0;
     let mut last_volume = -1.0;
+    let mut last_speed = 1.0;
     let mut last_paused: Option<bool> = None;
 
     loop {
-        match receiver.recv_timeout(Duration::from_millis(180)) {
-            Ok(Message::Sync(update)) => latest = Some(update),
-            Ok(Message::Stop(path)) => {
-                if current_path.as_deref() == Some(&path) {
-                    mpv.command(&["stop"])?;
-                    current_path = None;
-                    latest = None;
-                    status.lock().unwrap().ready = false;
-                }
+        // Only poll while a newly loaded file is getting ready. Reapplying a
+        // stale clock between updates can seek backwards during fast playback.
+        let message = if pending_seek && latest.as_ref().is_some_and(|clock| !clock.seeking) {
+            match receiver.recv_timeout(Duration::from_millis(180)) {
+                Ok(message) => Some(message),
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(mpsc::RecvTimeoutError::Timeout) => None,
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-        }
+        } else {
+            match receiver.recv() {
+                Ok(message) => Some(message),
+                Err(_) => break,
+            }
+        };
         // Drop superseded clock updates before touching the decoder.
-        while let Ok(message) = receiver.try_recv() {
+        for message in message.into_iter().chain(receiver.try_iter()) {
             match message {
                 Message::Sync(update) => latest = Some(update),
-                Message::Stop(path) if current_path.as_deref() == Some(&path) => {
-                    mpv.command(&["stop"])?;
-                    current_path = None;
-                    latest = None;
-                    status.lock().unwrap().ready = false;
+                Message::Stop(path) => {
+                    if latest.as_ref().is_some_and(|clock| clock.path == path) { latest = None; }
+                    if current_path.as_deref() == Some(&path) {
+                        mpv.command(&["stop"])?;
+                        current_path = None;
+                        pending_seek = false;
+                        *status.lock().unwrap() = NativeAudioStatus::default();
+                    }
                 }
-                Message::Stop(_) => {}
             }
         }
         let Some(update) = latest.as_ref() else { continue };
@@ -191,6 +197,11 @@ fn run_worker(path: PathBuf, receiver: mpsc::Receiver<Message>, status: &Arc<Mut
         if (last_volume - update.volume).abs() > 0.01 {
             mpv.set("volume", &update.volume.clamp(0.0, 150.0).to_string())?;
             last_volume = update.volume;
+        }
+        let speed = update.speed.clamp(0.1, 16.0);
+        if (last_speed - speed).abs() > 0.001 {
+            mpv.set("speed", &speed.to_string())?;
+            last_speed = speed;
         }
         let filter = build_audio_filter(&update.eq);
         if filter != last_filter {
@@ -207,11 +218,13 @@ fn run_worker(path: PathBuf, receiver: mpsc::Receiver<Message>, status: &Arc<Mut
             mpv.get("path").as_deref() == Some(update.path.as_str());
         if ready {
             let target = update.position.max(0.0);
-            if pending_seek || position.is_some_and(|actual| (actual - target).abs() > 0.35) {
+            if update.seeking {
+                pending_seek = true;
+            } else if pending_seek || position.is_some_and(|actual| (actual - target).abs() > 0.35) {
                 mpv.command(&["seek", &target.to_string(), "absolute+exact"])?;
                 pending_seek = false;
             }
-            let pause = !update.playing;
+            let pause = !update.playing || update.seeking;
             if last_paused != Some(pause) {
                 mpv.set("pause", if pause { "yes" } else { "no" })?;
                 last_paused = Some(pause);

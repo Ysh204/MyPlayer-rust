@@ -23,9 +23,10 @@ pub fn get_launch_files() -> Vec<String> {
 #[tauri::command]
 pub fn sync_native_audio(
     bridge: State<'_, NativeAudioBridge>, path: String, position: f64,
-    playing: bool, volume: f64, eq: EqState,
+    playing: bool, volume: f64, eq: EqState, speed: Option<f64>, seeking: Option<bool>,
 ) -> Result<NativeAudioStatus, String> {
-    bridge.sync(AudioSync { path, position, playing, volume, eq })
+    bridge.sync(AudioSync { path, position, playing, volume, eq,
+        speed: speed.unwrap_or(1.0), seeking: seeking.unwrap_or(false) })
 }
 
 #[tauri::command]

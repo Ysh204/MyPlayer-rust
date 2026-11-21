@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { parseSubtitles, plainSubtitle } from '../../core/subtitleParser';
 import { tauriClient } from '../../core/tauriClient';
@@ -10,6 +10,12 @@ export function usePlayerSubtitles(videoRef: RefObject<HTMLVideoElement>, showSt
   const [tracks, setTracks] = useState<TrackInfo[]>([OFF]);
   const [selected, setSelected] = useState(OFF.id);
   const [cues, setCues] = useState<SubtitleCue[]>([]);
+  // Tracks are sorted by start time. A running end time also indexes
+  // overlapping captions whose individual end times can be out of order.
+  const endTimes = useMemo(() => {
+    let lastEnd = -Infinity;
+    return cues.map(({ end }) => (lastEnd = Math.max(lastEnd, end)));
+  }, [cues]);
   const selectedRef = useRef(OFF.id);
   const autoSelect = useRef(true);
   const request = useRef(0);
@@ -108,15 +114,29 @@ export function usePlayerSubtitles(videoRef: RefObject<HTMLVideoElement>, showSt
     };
   }, [register, videoRef]);
 
-  function cueText(time: number) {
+  function cueText(clock: number, delay: number) {
     if (selected === OFF.id) return '';
+    const time = clock - delay;
     const nativeIndex = selected.startsWith('native:') ? Number(selected.slice(7)) : -1;
-    const nativeCues = videoRef.current?.textTracks[nativeIndex]?.cues;
-    if (nativeCues) {
-      return Array.from(nativeCues).filter((cue) => time >= cue.startTime && time < cue.endTime)
+    const native = videoRef.current?.textTracks[nativeIndex];
+    if (native) {
+      const active = delay === 0 ? Array.from(native.activeCues ?? [])
+        : Array.from(native.cues ?? []).filter((cue) => time >= cue.startTime && time < cue.endTime);
+      return active
         .map((cue) => plainSubtitle((cue as VTTCue).text ?? '')).join('\n');
     }
-    return cues.filter(({ start, end }) => time >= start && time < end).map(({ text }) => text).join('\n');
+    let low = 0;
+    let high = endTimes.length;
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2);
+      if (endTimes[mid] <= time) low = mid + 1;
+      else high = mid;
+    }
+    const lines = [];
+    for (let i = low; i < cues.length && cues[i].start <= time; i++) {
+      if (time < cues[i].end) lines.push(cues[i].text);
+    }
+    return lines.join('\n');
   }
 
   return { tracks, selected, reset, register, load, cueText, select: (id: string) => select(id, tracks) };

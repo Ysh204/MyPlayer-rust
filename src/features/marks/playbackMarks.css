@@ -1,0 +1,17 @@
+.marks-stack { gap: 14px; }
+.marks-stack kbd { color: var(--text); font: inherit; font-weight: 600; }
+.mark-action, .mark-jump { display: inline-flex; align-items: center; gap: 6px; border-radius: 4px; }
+.mark-action { color: var(--accent); padding: 4px 6px; font-size: 12px; }
+.marks-list { display: grid; gap: 2px; }
+.marks-list li { display: flex; align-items: center; gap: 4px; }
+.mark-jump { flex: 1; text-align: left; min-height: 29px; padding: 0 6px; }
+.mark-jump svg { color: var(--quiet); }
+.marks-list .icon-button { width: 26px; height: 26px; }
+.mark-jump, .loop-points strong { font-size: 12px; font-variant-numeric: tabular-nums; }
+.loop-section { border-top: 1px solid var(--line); padding-top: 12px; }
+.loop-points { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.loop-points button { display: grid; justify-items: start; gap: 3px; background: var(--raised); border: 1px solid var(--line); padding: 6px 9px; border-radius: 6px; }
+.loop-points span { font-size: 11px; color: var(--muted); }
+.loop-points strong { color: var(--text); font-weight: 550; }
+.mark-action:hover:not(:disabled), .mark-jump:hover:not(:disabled), .loop-points button:hover:not(:disabled) { background: var(--hover); }
+.marks-stack button:disabled { opacity: .5; }

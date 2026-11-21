@@ -1,6 +1,6 @@
 # MyPlayer Pro
 
-MyPlayer Pro is a Windows x64 player for local video and music. It uses a compact set of controls that hide during playback, with a queue, subtitle controls, and a five-band equalizer. The desktop app uses Tauri 2 and Rust, with a React and TypeScript interface.
+MyPlayer Pro is a Windows x64 player for local video and music. The video fills the window, with a slim floating bar for playback and a queue, bookmarks, subtitles, and equalizer a click away. The desktop app uses Tauri 2 and Rust, with a React and TypeScript interface.
 
 ## Screenshots
 
@@ -12,7 +12,7 @@ MyPlayer Pro is a Windows x64 player for local video and music. It uses a compac
 | **Subtitles** | **Playback settings** |
 | ![Subtitle track picker and appearance controls](docs/screenshots/04_subtitle_panel.png) | ![Playback settings dialog with resume and seeking options](docs/screenshots/06_playback_settings.png) |
 
-[View the right-click playback menu](docs/screenshots/02_context_menu.png)
+[Start screen](docs/screenshots/00_open_player.png) · [Bookmarks and A–B repeat](docs/screenshots/07_bookmarks.png) · [Right-click playback menu](docs/screenshots/02_context_menu.png)
 
 ## Install and open files
 
@@ -22,6 +22,9 @@ Open a file with **Ctrl + O**, drag it into the window, or open it from Explorer
 
 ## Playback and format support
 
+- Hover over the timeline to preview a timestamp. Click the duration to switch between total and remaining time. Keyboard skips keep the controls hidden. Dragging previews the time and seeks directly to the chosen frame on release.
+- Press **B** to bookmark the current position. Open **More actions → Bookmarks & loop** to jump to or remove a bookmark. For A–B repeat, choose **Set start**, play or seek to the other end, then choose **Set end**. **Clear** stops the repeat.
+- Reopen one of the last three local files from **Recently played** on the start screen. **Clear** removes that list.
 - Reorder files in the queue and resume local files from their saved position. Playback settings include seek and volume steps, precise seeking, and GPU video decoding. Restart the player after changing GPU decoding.
 - Adjust the five-band equalizer, preamp, Night Mode compressor, or audio delay. Switch audio tracks when the playback engine exposes multiple tracks.
 - Load external SRT, WebVTT, ASS, SSA, or MicroDVD SUB subtitles, or select embedded text subtitles from an MKV. Adjust subtitle size, position, background opacity, and timing.
@@ -36,6 +39,7 @@ The file picker accepts MP4, M4V, MKV, WebM, MOV, AVI, OGV, FLAC, MP3, M4A, WAV,
 | Left / Right, or J / L | Seek backward or forward (5 seconds by default) |
 | Up / Down | Adjust volume (5% by default) |
 | M | Mute or restore the previous volume |
+| B | Bookmark the current position |
 | F or F11 | Toggle fullscreen |
 | Ctrl + O | Open the media file picker |
 | Esc | Dismiss the open menu or panel, or exit fullscreen |
