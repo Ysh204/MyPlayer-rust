@@ -55,6 +55,7 @@ button:disabled { cursor: default; }
 .home-intro { color: #f3eddf; }
 .home-intro h1 { font: 400 clamp(42px, 5.4vw, 80px)/1.04 Georgia, 'Times New Roman', serif; letter-spacing: -.065em; }
 .home-intro i { font-weight: 400; letter-spacing: -.065em; }
+.home-logo { display: inline-block; width: .74em; height: .85em; margin-right: .19em; vertical-align: -.07em; }
 .home-intro p { margin: 15px 0 24px; color: #c7c1b6; font-size: clamp(12px, 1.05vw, 15px); }
 .open-file { display: inline-flex; align-items: center; gap: 9px; padding: 8px 9px 8px 13px; background: var(--accent-hover); color: var(--ink); font-size: 13px; font-weight: 600; border-radius: 7px; }
 .open-file:hover { background: #f7ebd5; }

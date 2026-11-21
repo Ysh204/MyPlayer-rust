@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ArrowUpRight, FilePlay, FolderOpen } from 'lucide-react';
 import { readStorage, writeStorage } from '../../core/playbackStorage';
+import { PlayerLogo } from './PlayerLogo';
 
 const recentKey = 'myplayer.recentFiles';
 const limit = 3;
@@ -34,7 +35,7 @@ export function PlayerHome({ recentFiles, onOpen, onSelect, onClear }: {
     <div className="player-home">
       <div className="home-hero">
         <div className="home-intro">
-          <h1>MyPlayer <i>Pro</i></h1>
+          <h1><PlayerLogo className="home-logo" />MyPlayer <i>Pro</i></h1>
           <p>Drop a video or audio file here to play.</p>
           <button type="button" className="open-file" onClick={onOpen}>
             <FolderOpen size={16} aria-hidden="true" />Open file <kbd>Ctrl O</kbd>

@@ -1,4 +1,4 @@
-# MyPlayer Pro
+# <img src="public/myplayer-pro.svg" alt="" width="36" height="36" align="absmiddle"> MyPlayer Pro
 
 MyPlayer Pro is a Windows x64 player for local video and music. The video fills the window, with a slim floating bar for playback and a queue, bookmarks, subtitles, and equalizer a click away. The desktop app uses Tauri 2 and Rust, with a React and TypeScript interface.
 
