@@ -19,8 +19,9 @@ export function usePlayerSubtitles(videoRef: RefObject<HTMLVideoElement>, showSt
   const select = useCallback(async (id: string, options: TrackInfo[]) => {
     const track = options.find((item) => item.id === id);
     if (!track) return;
-    const generation = ++request.current;
     autoSelect.current = false;
+    if (selectedRef.current === id) return;
+    const generation = ++request.current;
     selectedRef.current = id;
     setSelected(id);
     setCues([]);
@@ -100,10 +101,15 @@ export function usePlayerSubtitles(videoRef: RefObject<HTMLVideoElement>, showSt
       if (options.length) register(options);
     };
     native.addEventListener('addtrack', discover);
-    return () => native.removeEventListener('addtrack', discover);
+    native.addEventListener('change', discover);
+    return () => {
+      native.removeEventListener('addtrack', discover);
+      native.removeEventListener('change', discover);
+    };
   }, [register, videoRef]);
 
   function cueText(time: number) {
+    if (selected === OFF.id) return '';
     const nativeIndex = selected.startsWith('native:') ? Number(selected.slice(7)) : -1;
     const nativeCues = videoRef.current?.textTracks[nativeIndex]?.cues;
     if (nativeCues) {
