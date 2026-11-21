@@ -2,6 +2,18 @@
 
 MyPlayer Pro is a Windows x64 player for local video and music. It uses a compact set of controls that hide during playback, with a queue, subtitle controls, and a five-band equalizer. The desktop app uses Tauri 2 and Rust, with a React and TypeScript interface.
 
+## Screenshots
+
+![MyPlayer Pro playing a video with its compact playback controls visible](docs/screenshots/01_main_player.png)
+
+| Playback queue | Equalizer |
+| --- | --- |
+| ![Reorderable playback queue beside the video](docs/screenshots/05_playlist_queue.png) | ![Five-band equalizer with preamp, Night Mode, and audio delay controls](docs/screenshots/03_equalizer_panel.png) |
+| **Subtitles** | **Playback settings** |
+| ![Subtitle track picker and appearance controls](docs/screenshots/04_subtitle_panel.png) | ![Playback settings dialog with resume and seeking options](docs/screenshots/06_playback_settings.png) |
+
+[View the right-click playback menu](docs/screenshots/02_context_menu.png)
+
 ## Install and open files
 
 Open [GitHub Releases](https://github.com/Ysh204/MyPlayer-rust/releases) and download the Windows x64 setup installer when available. The NSIS installer registers **MyPlayer Pro (Rust)** for `.mkv`, `.mp3`, `.m4a`, `.flac`, `.wav`, `.ogg`, and `.opus`. To set it as a default, right-click a file, choose **Open with** → **Choose another app**, select **MyPlayer Pro (Rust)**, and choose **Always**.
